@@ -18,6 +18,8 @@ from starlette.requests import Request
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT.parent))
 
+pytest.importorskip("astrbot")
+
 from astrbot.api.web import (  # noqa: E402
     PluginRequest,
     bind_request_context,
@@ -29,7 +31,10 @@ from astrbot_plugin_worlditor.world.engine import (  # noqa: E402
     AGENT_PLAYER_ID,
     WorldEngine,
 )
-from astrbot_plugin_worlditor.world.store import AGENT_START_LOCATION, WorldStore  # noqa: E402
+from astrbot_plugin_worlditor.world.store import (  # noqa: E402
+    AGENT_START_LOCATION,
+    WorldStore,
+)
 
 
 class FakePlugin(StateAPI, PlayAPI):
@@ -66,7 +71,9 @@ def make_plugin_request(body: dict | None = None, query: str = "") -> PluginRequ
     return PluginRequest(Request(scope, receive))
 
 
-async def call_handler(plugin: FakePlugin, handler_name: str, body: dict | None = None, query: str = ""):
+async def call_handler(
+    plugin: FakePlugin, handler_name: str, body: dict | None = None, query: str = ""
+):
     """把请求绑定到当前异步上下文后调用指定 handler。"""
     req = make_plugin_request(body, query)
     handler = getattr(plugin, handler_name)
@@ -254,7 +261,6 @@ def test_main_wires_routes(monkeypatch, tmp_path):
     )
     main_mod.WorlditorPlugin(FakeContext())
     expected = [
-        (f"/astrbot_plugin_worlditor{path}", methods)
-        for path, _, methods, _ in _ROUTES
+        (f"/astrbot_plugin_worlditor{path}", methods) for path, _, methods, _ in _ROUTES
     ]
     assert registered == expected
