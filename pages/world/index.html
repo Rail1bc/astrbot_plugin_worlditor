@@ -12,6 +12,14 @@
         <h1>世界编辑器</h1>
         <span class="badge badge-debug">调试工具</span>
       </div>
+      <div class="mode-switch" role="tablist" aria-label="视图模式">
+        <button id="mode-edit" type="button" class="mode-btn" role="tab" aria-selected="true">
+          编辑
+        </button>
+        <button id="mode-play" type="button" class="mode-btn" role="tab" aria-selected="false">
+          玩家
+        </button>
+      </div>
       <div class="header-status">
         <span id="loc-name" class="loc-name">加载中…</span>
         <span id="player-id" class="player-id"></span>
@@ -21,23 +29,18 @@
     </header>
 
     <main class="page-body">
-      <section class="map-pane">
+      <section id="view-edit">
+        <div class="edit-toolbar">
+          <button id="btn-new-location" type="button" class="btn">＋ 新建地块</button>
+          <button id="btn-new-exit" type="button" class="btn">＋ 新建出口</button>
+        </div>
         <div id="graph" class="graph"></div>
         <div id="map-error" class="map-error" hidden></div>
       </section>
-      <aside class="exits-pane">
-        <h2>可移动的出口</h2>
-        <div id="exits" class="exits"></div>
-        <p id="exits-empty" class="hint" hidden>这里没有任何出口。</p>
-        <details class="legend">
-          <summary>图例</summary>
-          <ul>
-            <li><span class="dot dot-current"></span>你当前所在</li>
-            <li><span class="dot dot-agent"></span>Agent 位置</li>
-            <li><span class="dot dot-arrow"></span>有向出口（箭头指向目标，虚线为隐藏目标）</li>
-          </ul>
-        </details>
-      </aside>
+      <section id="view-play" hidden>
+        <div id="play-grid" class="play-grid"></div>
+        <div id="play-error" class="map-error" hidden></div>
+      </section>
     </main>
 
     <div id="modal-mask" class="modal-mask" hidden>

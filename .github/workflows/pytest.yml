@@ -48,7 +48,7 @@ jobs:
         run: |
           set -euo pipefail
           # ES module import 需 .mjs 后缀才被 node 识别；与本地验证方式一致。
-          for f in app; do
+          for f in app shared edit-view edit-forms play-view; do
             cp "pages/world/$f.js" "$RUNNER_TEMP/$f.mjs"
             node --check "$RUNNER_TEMP/$f.mjs"
           done
