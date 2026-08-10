@@ -1,4 +1,4 @@
-// app.js — 有向图世界调试页
+// app.js — 世界编辑器调试页
 // 定位：管理员在 dashboard 内验证世界与移动逻辑的调试工具（非正式用户入口）。
 // 约束（沙箱 iframe）：无原生 alert/confirm（自绘 modal）、无同源 localStorage
 // （沙箱不含 allow-same-origin，故 player_id 只存内存、刷新即重新注册）、

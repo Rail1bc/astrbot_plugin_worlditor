@@ -1,4 +1,4 @@
-"""有向图世界插件（astrbot_plugin_worlditor）。
+"""世界编辑器插件（astrbot_plugin_worlditor）。
 
 世界是一个有向图：地块（Location）为节点，带标签的出口（Exit）为有向边。
 `a→b` 可达**不蕴含** `b→a`；不存在空间相邻——只有出边才构成"相邻/可达"。
@@ -27,7 +27,7 @@ PLUGIN_NAME = "astrbot_plugin_worlditor"
 
 
 class WorlditorPlugin(Star, StateAPI, PlayAPI):
-    """有向图世界的入口：装配引擎、注册 Web API 与 LLM 工具。"""
+    """世界编辑器的入口：装配引擎、注册 Web API 与 LLM 工具。"""
 
     def __init__(self, context: Context, config: dict | None = None) -> None:
         super().__init__(context, config)
@@ -42,7 +42,7 @@ class WorlditorPlugin(Star, StateAPI, PlayAPI):
         """插件激活：载入持久化数据、恢复 agent 位置、启动清理任务。"""
         await self.engine.initialize()
         logger.info(
-            f"[worlditor] 有向图世界已就绪：地块 {len(self.engine.list_locations())} 个，"
+            f"[worlditor] 世界编辑器已就绪：地块 {len(self.engine.list_locations())} 个，"
             f"出口 {len(self.engine.list_all_exits())} 条。"
         )
 

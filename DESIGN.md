@@ -1,4 +1,4 @@
-# 有向图世界（astrbot_plugin_worlditor）设计文档
+# 世界编辑器（astrbot_plugin_worlditor）设计文档
 
 ## 定位
 

@@ -1,4 +1,4 @@
-"""世界引擎：有向图世界的核心动作。
+"""世界引擎：世界编辑器的核心动作。
 
 协议无关——LLM 工具、插件页 API、未来世界 HTTP API（v2）共用同一套动作。
 全部变更在实例级 ``asyncio.Lock`` 内完成；读路径走内存快照、免锁。
@@ -26,7 +26,7 @@ class WorldError(Exception):
 
 
 class WorldEngine:
-    """有向图世界的唯一权威引擎（插件进程内）。"""
+    """世界编辑器的唯一权威引擎（插件进程内）。"""
 
     def __init__(self, store: WorldStore) -> None:
         self.store = store
