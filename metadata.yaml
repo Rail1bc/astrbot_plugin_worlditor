@@ -1,0 +1,8 @@
+name: astrbot_plugin_worlditor # 插件唯一识别名，以 astrbot_plugin_ 前缀开头
+display_name: 有向图世界 # 用于展示的名字
+desc: 图结构驱动的探索世界：任意用户以隐形实体在有向图地块间移动（多边同目标、隐藏目标、环路——"迷路"式反直觉地图），agent 可用工具查看场景与移动，位置跨对话持久化。 # 插件简短描述
+version: v0.1.0 # 插件版本号
+author: Rail1bc # 作者
+repo: https://github.com/Rail1bc/astrbot_plugin_worlditor # 插件的仓库地址
+astrbot_version: ">=4.24.1" # 插件适配的 AstrBot 版本范围
+support_platforms: # 世界玩法与具体 IM 适配器无关，留空表示与平台无关

@@ -1,0 +1,374 @@
+/* style.css — 有向图世界调试页（亮/暗主题，框架注入 data-theme） */
+
+:root {
+  --bg: #f5f6fa;
+  --panel: #ffffff;
+  --border: #e0e2e8;
+  --text: #1f2329;
+  --text-dim: #6b7280;
+  --accent: #2563eb;
+  --danger: #dc2626;
+  --current: #f59e0b;
+  --agent: #10b981;
+  --edge: #94a3b8;
+  --edge-hidden: #dc2626;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+html[data-theme="dark"] {
+  --bg: #16181d;
+  --panel: #1f232b;
+  --border: #303540;
+  --text: #e5e7eb;
+  --text-dim: #9ca3af;
+  --accent: #60a5fa;
+  --danger: #f87171;
+  --current: #fbbf24;
+  --agent: #34d399;
+  --edge: #4b5563;
+  --edge-hidden: #f87171;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.header-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header-title h1 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.badge {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+
+.badge-debug {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.header-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.loc-name {
+  font-weight: 600;
+}
+
+.player-id {
+  color: var(--text-dim);
+  font-size: 13px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.page-body {
+  display: flex;
+  gap: 16px;
+  padding: 16px;
+  align-items: flex-start;
+}
+
+.map-pane {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+
+.graph {
+  width: 100%;
+  overflow: auto;
+}
+
+.graph-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-width: 600px;
+}
+
+/* 边 */
+.edge {
+  fill: none;
+  stroke: var(--edge);
+  stroke-width: 2;
+}
+
+.edge-hidden {
+  stroke: var(--edge-hidden);
+  stroke-dasharray: 6 4;
+}
+
+.arrow-path {
+  fill: var(--edge);
+}
+
+.arrow-path-hidden {
+  fill: var(--edge-hidden);
+}
+
+.edge-label {
+  fill: var(--text-dim);
+  font-size: 12px;
+}
+
+.edge-label-hidden {
+  fill: var(--danger);
+  font-style: italic;
+}
+
+/* 节点 */
+.node circle {
+  fill: var(--panel);
+  stroke: var(--edge);
+  stroke-width: 2;
+}
+
+.node-current circle {
+  fill: var(--current);
+  stroke: var(--current);
+}
+
+.node-agent circle {
+  stroke: var(--agent);
+  stroke-width: 3;
+}
+
+.node-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.node-id {
+  font-size: 10px;
+  fill: var(--text-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.agent-badge {
+  font-size: 11px;
+  fill: var(--agent);
+  font-weight: 600;
+}
+
+/* 出口面板 */
+.exits-pane {
+  flex: 0 0 320px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  box-shadow: var(--shadow);
+}
+
+.exits-pane h2 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+
+.exits {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.exit-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.exit-btn:hover {
+  border-color: var(--accent);
+}
+
+.exit-target {
+  color: var(--text-dim);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.exit-target-hidden {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.legend {
+  margin-top: 14px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.legend ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+
+.dot-current {
+  background: var(--current);
+}
+
+.dot-agent {
+  background: transparent;
+  border: 2px solid var(--agent);
+}
+
+.dot-arrow {
+  background: var(--edge);
+  border-radius: 0;
+  width: 12px;
+  height: 2px;
+}
+
+.hint {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.map-error {
+  padding: 20px;
+  color: var(--danger);
+}
+
+.btn {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.btn:hover {
+  border-color: var(--accent);
+}
+
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+
+/* 自绘弹窗 */
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal {
+  max-width: 420px;
+  width: 92%;
+  max-height: 80vh;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+}
+
+.modal-x {
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+
+.modal-body {
+  padding: 16px;
+  overflow-y: auto;
+  font-size: 14px;
+  white-space: pre-wrap;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+}
+
+/* 窄屏（v2 独立网页将做完整移动端适配，此处仅基础回退） */
+@media (max-width: 860px) {
+  .page-body {
+    flex-direction: column;
+  }
+
+  .exits-pane {
+    flex: 1 1 auto;
+    width: 100%;
+  }
+}

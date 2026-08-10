@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>有向图世界 · 调试</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="page-header">
+      <div class="header-title">
+        <h1>有向图世界</h1>
+        <span class="badge badge-debug">调试工具</span>
+      </div>
+      <div class="header-status">
+        <span id="loc-name" class="loc-name">加载中…</span>
+        <span id="player-id" class="player-id"></span>
+        <button id="btn-refresh" type="button" class="btn">重新载入</button>
+        <button id="btn-reregister" type="button" class="btn">重新注册</button>
+      </div>
+    </header>
+
+    <main class="page-body">
+      <section class="map-pane">
+        <div id="graph" class="graph"></div>
+        <div id="map-error" class="map-error" hidden></div>
+      </section>
+      <aside class="exits-pane">
+        <h2>可移动的出口</h2>
+        <div id="exits" class="exits"></div>
+        <p id="exits-empty" class="hint" hidden>这里没有任何出口。</p>
+        <details class="legend">
+          <summary>图例</summary>
+          <ul>
+            <li><span class="dot dot-current"></span>你当前所在</li>
+            <li><span class="dot dot-agent"></span>Agent 位置</li>
+            <li><span class="dot dot-arrow"></span>有向出口（箭头指向目标，虚线为隐藏目标）</li>
+          </ul>
+        </details>
+      </aside>
+    </main>
+
+    <div id="modal-mask" class="modal-mask" hidden>
+      <div class="modal" role="dialog" aria-modal="true">
+        <div class="modal-head">
+          <span id="modal-title">提示</span>
+          <button id="modal-close" type="button" class="modal-x" aria-label="关闭">✕</button>
+        </div>
+        <div id="modal-body" class="modal-body"></div>
+        <div id="modal-actions" class="modal-actions"></div>
+      </div>
+    </div>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

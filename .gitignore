@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[codz]
+*.egg-info/
+
+# 测试与工具缓存
+.pytest_cache/
+.ruff_cache/
+
+# SQLite 运行时数据
+*.db
+*.db-wal
+*.db-shm
+
+# 环境
+.venv/
+venv/
+.env
+
+# AstrBot 核心运行数据（勿提交）
+data/
