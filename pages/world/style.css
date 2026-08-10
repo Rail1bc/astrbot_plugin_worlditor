@@ -316,6 +316,10 @@ body {
   z-index: 100;
 }
 
+.modal-mask[hidden] {
+  display: none;
+}
+
 .modal {
   max-width: 420px;
   width: 92%;
