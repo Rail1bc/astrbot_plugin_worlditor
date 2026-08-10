@@ -32,10 +32,10 @@ WorldStore（world/store.py，SQLite aiosqlite + WAL，启动全量载入内存�
 ## 数据模型（world/model.py）
 
 - `Location(id, name, description, layout_x=None, layout_y=None)` — `layout` 仅可视化提示，与拓扑无关。
-- `Exit(id, from_id, to_id, label, reveal_target=True)` — 有向；同 `(from_id, to_id)` 允许多条不同 label 的出边；`reveal_target=False` 时场景隐藏目标名（显示 `???`）。
+- `Exit(id, from_id, to_id, label, reveal_target=True, direction="up")` — 有向；同 `(from_id, to_id)` 允许多条不同 label 的出边；`reveal_target=False` 时场景隐藏目标名（显示 `???`）；`direction` 为玩家视图十字槽位方向（`up/right/down/left`），编辑器保证同一出发地块的出边方向互异（数据层不强制）。
 - `Player(player_id, name, location_id, is_agent=False, last_active_ts=0.0, user_id=None)` — 人类（v1）仅内存；agent 固定 `player_id="agent"` 位置持久化；`user_id` 为 v2 用户系统预留。
 
-"迷路"效果由图本身实现：多边同目标、隐藏目标、环路。
+"迷路"效果由图本身实现：多边同目标、隐藏目标、环路。**约束分层**：数据层不设出度限制（合法 = 结构允许），规范由可视化编辑器保证，视图层以「+N」折叠兜底违规地图。
 
 ## 引擎动作（world/engine.py，协议无关）
 
@@ -46,6 +46,14 @@ WorldStore（world/store.py，SQLite aiosqlite + WAL，启动全量载入内存�
 - `await engine.register_player(player_id, name=None, *, is_agent=False, user_id=None) -> Location`（幂等）
 - `await engine.deregister_player(player_id) -> bool`（agent 不可注销）
 - `await engine.touch(player_id) -> bool`（刷新活跃时间）
+- 地图编辑（v0.2，全部锁内；`_UNSET = object()` 哨兵区分「参数未提供=不变」与「显式传 None=清空/重置」）：
+  - `await engine.create_location(id, name, description="", *, layout_x=None, layout_y=None) -> Location`
+  - `await engine.update_location(id, *, name=_UNSET, description=_UNSET, layout_x=_UNSET, layout_y=_UNSET) -> Location`
+  - `await engine.delete_location(id) -> None` — 级联删出边；拒绝删除有玩家（含 agent）所在地块
+  - `await engine.create_exit(id, from_id, to_id, label, *, reveal_target=True, direction="up") -> Exit`
+  - `await engine.update_exit(id, *, to_id=_UNSET, label=_UNSET, reveal_target=_UNSET, direction=_UNSET) -> Exit`（from_id 不可变）
+  - `await engine.delete_exit(id) -> None`
+  - 校验（结构合法，不设出度限制）：id/name/label 去空格非空、重复 id 报错、from/to 必须存在、direction 在 `DIRECTIONS` 内、layout 拒绝非数字 / bool / NaN / Inf；自环出口合法
 - 只读：`list_locations()` / `list_all_exits()` / `list_exits(location_id)` / `get_location(id)` / `get_exit(id)` / `get_player(id)` / `list_players()`
 - 后台任务：`initialize()` 启动、`terminate()` 取消；每 60s 清理超 15 分钟无活动的非 agent 玩家。
 
@@ -58,11 +66,13 @@ WorldStore（world/store.py，SQLite aiosqlite + WAL，启动全量载入内存�
 | 表 | 说明 |
 |---|---|
 | `locations(id TEXT PK, name, description, layout_json)` | 地块；`layout_json` 存 `{"x","y"}` 坐标提示 |
-| `exits(id TEXT PK, from_id, to_id, label, reveal_target)` | 有向出口；from_id/to_id 外键 locations，同 (from,to) 允许多行 |
+| `exits(id TEXT PK, from_id, to_id, label, reveal_target, direction)` | 有向出口；from_id/to_id 外键 locations，同 (from,to) 允许多行；direction 为十字槽位方向 |
 | `world_meta(key TEXT PK, value)` | `schema_version` + `agent_location` |
 
 - WAL + `foreign_keys=ON`；启动全量载入内存（读路径快）。
 - `locations` 为空时幂等播种示例小镇（小镇区 + 迷雾区：多边同目标 / 隐藏目标 / 环路），agent 初始在广场。
+- 版本迁移（schema v2）：`_migrate()` 用 `PRAGMA table_info(exits)` 检查 `direction` 列，老库缺列时 `ALTER TABLE exits ADD COLUMN direction TEXT NOT NULL DEFAULT 'up'`。
+- 编辑写操作（`save_location` / `delete_location_with_exits` / `save_exit` / `delete_exit`）遵循 DB 先、内存后的约定，同时维护 `exits_by_from` 索引（空桶删 key）。
 
 ## LLM 工具（main.py）
 
@@ -79,14 +89,22 @@ WorldStore（world/store.py，SQLite aiosqlite + WAL，启动全量载入内存�
 | `POST /world/player/register` `{name?}` | 随机 player_id（uuid4 前 8 位）、默认名 `旅行者-XXXX`、放起始地块；返回 `{player_id, location_id, location_name}` |
 | `POST /world/move` `{player_id, exit_id}` | 按出口移动并返回新场景；非法出边 → 400 |
 | `POST /world/player/deregister` `{player_id}` | 页面 unload 尽力注销（超时清理兜底） |
+| `POST /world/location/create` `{id, name, description?, layout?}` | 新建地块；`layout` 为 `{x, y}` 或 null |
+| `POST /world/location/update` `{id, name?, description?, layout?}` | 更新地块；缺省键不变，`layout: null` = 清空坐标 |
+| `POST /world/location/delete` `{id}` | 删除地块（级联删出边，拒绝删除有玩家占据的地块） |
+| `POST /world/exit/create` `{id, from_id, to_id, label, reveal_target?, direction?}` | 新建出口 |
+| `POST /world/exit/update` `{id, to_id?, label?, reveal_target?, direction?}` | 更新出口（from_id 不可变） |
+| `POST /world/exit/delete` `{id}` | 删除一条出口 |
 
-## 插件网页（pages/world/）— v1 调试工具
+handler 只做类型校验（dict、字符串、layout 数字排除 bool、reveal_target 布尔、direction 字符串），语义校验抛给引擎（`WorldError` → 400 error 信封）；update 按 payload 出现的键拼 kwargs。
 
-定位：供管理员在 dashboard 内验证世界与移动逻辑，非正式用户入口（正式入口为 v2 独立网页）。
+## 插件网页（pages/world/）— 单页双模式调试工具
+
+定位：供管理员在 dashboard 内验证世界与移动逻辑，非正式用户入口（正式入口为 v2 独立网页）。单页内分段控件切换两种视图（`app.js` / `shared.js` / `edit-view.js` / `edit-forms.js` / `play-view.js`，纯 ES module 无构建）。
 
 - 无本地 player_id → 先注册 → `GET /world/state` → 渲染。
-- SVG 有向图：节点 + 有向箭头 + label；`layout` 坐标优先，未设坐标用确定性兜底布局；当前地块高亮 + agent 静态标记。
-- 出边按钮列表（label + 目标名或 `???`），按 exit_id 移动。
+- **编辑模式（上帝视角）**：全图 SVG（`layout` 坐标优先、未设坐标用确定性兜底布局、同 (from,to) 多条出边偏移曲线）；地块永远真名、不存在 `???`；边画方向信息（单向箭头 / 双向双箭头）；重名地块悬浮全体高亮（识别重名）；点击节点 / 边 → 编辑表单（地块：id/name/description/layout；出口：from/to/label/「隐藏目的地」开关/direction 四选/删除+确认），提交后 re-fetch 世界状态重绘。
+- **玩家模式**：当前地块居中（名/描述/玩家 id），有出边连接的 1 跳目标按 `direction` 放上/右/下/左——**无连接的槽位不可见**；所有边一视同仁（无箭头简单连线，不查反向边、不画方向）；**无回环**（自环出口照常占槽位、目标格即当前地块）；隐藏目标显示 `???`（名称只取 scene 的 `target_name`，绝不全图查名）；违规地图（出度 >4 或同方向冲突）前 4 槽 + 「+N」折叠 → 展开全部出口列表（保留 exit_id）可收回；点击目标格按 exit_id 移动。
 - 无 SSE；sandbox iframe 无 localStorage / 原生 alert → 自绘 modal + textContent 转义 + 模块级 playerId（刷新重新注册）。
 
 ## 一致性
@@ -114,7 +132,7 @@ WorldStore（world/store.py，SQLite aiosqlite + WAL，启动全量载入内存�
 
 ### 地图可视化编辑
 
-有向图编辑：增删地块、增删带标签有向出边、设置 `reveal_target` / 布局坐标。
+有向图编辑：增删地块、增删带标签有向出边、设置 `reveal_target` / 布局坐标。v0.2 已在插件调试页落地单页双模式的编辑能力（全图可视化 + 表单编辑、方向槽位、重名高亮）；v2 独立网页将作为正式的可视化编辑入口。
 
 ### 人与 agent 实时互见（SSE 事件流）
 

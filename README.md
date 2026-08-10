@@ -11,7 +11,7 @@
 <p><sub>有向图底座 &nbsp;&nbsp; 无限生长 &nbsp;&nbsp; AI 与人共存 &nbsp;&nbsp; 实体与交互</sub></p>
 
 <p>
-  <a href="https://github.com/Rail1bc/astrbot_plugin_worlditor/releases"><img src="https://img.shields.io/badge/%E7%89%88%E6%9C%AC-v0.1.0-5f7f79?style=flat-square&labelColor=263a36" alt="最新版本"></a>
+  <a href="https://github.com/Rail1bc/astrbot_plugin_worlditor/releases"><img src="https://img.shields.io/badge/%E7%89%88%E6%9C%AC-v0.2.0-5f7f79?style=flat-square&labelColor=263a36" alt="最新版本"></a>
   <img src="https://img.shields.io/badge/Python-3.12%2B-e9f1ef?style=flat-square&labelColor=263a36" alt="Python 3.12 或更高版本">
   <img src="https://img.shields.io/badge/AstrBot-%3E%3D%204.24.1-f3eee4?style=flat-square&labelColor=544c3d" alt="AstrBot 4.24.1 或更高版本">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-f2e8e5?style=flat-square&labelColor=5b403a" alt="AGPL-3.0 许可证"></a>
@@ -20,7 +20,7 @@
 </div>
 
 > [!NOTE]
-> **当前版本状态**：v0.1.0 是"图结构世界"概念的早期形态——基础地图 + 移动。框架内置插件页仅供管理员调试验证，正式用户入口（独立网页、用户系统）在 v2 路线中。完整设计见 [DESIGN.md](DESIGN.md)。
+> **当前版本状态**：v0.2.0 在"图结构世界"基础上加入**可视化编辑**与**玩家视图**——调试页单页双模式（管理员可视化编辑地图 / 模拟玩家体验迷路）。正式用户入口（独立网页、用户系统）仍在 v2 路线中。完整设计见 [DESIGN.md](DESIGN.md)。
 
 ## 这是什么
 
@@ -59,12 +59,12 @@
   [town_plaza_library] 沿着北街走向图书馆 → 老图书馆
 ```
 
-## 插件调试页（v1）
+## 插件调试页（单页双模式）
 
-供管理员在 dashboard 内验证世界与移动逻辑（**非正式用户入口**，正式入口为 v2 独立网页）：
+供管理员在 dashboard 内验证与编辑世界（**非正式用户入口**，正式入口为 v2 独立网页）：
 
-- SVG 有向图：节点 + 有向箭头 + 出口 label；布局坐标优先，未设坐标用确定性兜底布局。
-- 出边按钮列表按 `exit_id` 移动，隐藏目标显示 `???`。
+- **编辑模式**（上帝视角）：全图可视化 + 可视化编辑——点击节点 / 边进入表单，增删改地块与出口、设置出口方向（上 / 右 / 下 / 左）与「隐藏目的地」开关、调整布局坐标；单向 / 双向边以箭头区分，重名地块悬浮全体高亮。
+- **玩家模式**：模拟玩家视角——只显示当前地块 + 有出边连接的 1 跳目标（十字布局），隐藏目标显示 `???`，点击目标格按 `exit_id` 移动。
 - 无本地 player_id 时自动注册隐形玩家（仅内存，刷新即重新注册）。
 
 ## 数据与持久化
@@ -77,7 +77,7 @@
 
 - **v2**：独立网页（移动端优先）+ 用户系统（注册 / 登录 / token，世界玩家与账户绑定）；暴露世界 HTTP API（共享 token + CORS），插件为唯一权威后端。
 - **实体与交互系统**：人物 / 生物 / 建筑 / 物品等实体，对话 / 开启 / 破坏 / 阅读等交互，LLM 生成 NPC 对话。
-- **地图可视化编辑**：增删地块、增删带标签有向出口、设置 `reveal_target` 与布局坐标。
+- **地图可视化编辑**：增删地块、增删带标签有向出口、设置 `reveal_target` 与布局坐标——v0.2 已在调试页落地单页双模式的编辑能力，v2 独立网页将作为正式入口。
 - **人与 agent 实时互见**：SSE 事件流广播全量快照。
 - **MCP 封装**：引擎 action 层协议无关，后续抽独立进程 + FastMCP 薄封装。
 - **v3**：独立应用。
