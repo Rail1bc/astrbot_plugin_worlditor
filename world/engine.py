@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 
-from .model import Exit, ExitView, Location, Player, SceneView
+from .model import DIRECTIONS, Exit, ExitView, Location, Player, SceneView
 from .store import AGENT_START_LOCATION, WorldStore
 
 logger = logging.getLogger("astrbot")
@@ -20,9 +21,66 @@ AGENT_PLAYER_ID = "agent"
 HUMAN_IDLE_TIMEOUT_SECONDS = 15 * 60
 CLEANUP_INTERVAL_SECONDS = 60
 
+# 哨兵：update 类动作用于区分「参数未提供（不变）」与「显式传 None（清空/重置）」
+_UNSET = object()
+
 
 class WorldError(Exception):
     """世界动作的业务错误（非法出口、玩家不存在等），消息可直接展示给用户。"""
+
+
+def _check_id(id_: object, what: str = "id") -> None:
+    if not isinstance(id_, str) or not id_.strip():
+        raise WorldError(f"{what}不能为空")
+
+
+def _clean_required(value: object, what: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise WorldError(f"{what}不能为空")
+    return value.strip()
+
+
+def _check_direction(direction: object) -> str:
+    if direction not in DIRECTIONS:
+        raise WorldError(f"方向必须是 {'/'.join(DIRECTIONS)} 之一")
+    return str(direction)
+
+
+def _check_bool(value: object, what: str) -> bool:
+    if not isinstance(value, bool):
+        raise WorldError(f"{what}必须是布尔值")
+    return value
+
+
+def _coerce_layout(
+    x: object, y: object, what: str = "布局坐标"
+) -> tuple[float | None, float | None]:
+    if x is None and y is None:
+        return None, None
+    if x is None or y is None:
+        raise WorldError(f"{what}必须同时提供 x 与 y，或同时省略")
+    if (
+        isinstance(x, bool)
+        or isinstance(y, bool)
+        or not isinstance(x, (int, float))
+        or not isinstance(y, (int, float))
+    ):
+        raise WorldError(f"{what}必须是数字")
+    fx, fy = float(x), float(y)
+    if not math.isfinite(fx) or not math.isfinite(fy):
+        raise WorldError(f"{what}不能是 NaN 或无穷")
+    return fx, fy
+
+
+def _resolve_layout(
+    loc: Location, x: object, y: object
+) -> tuple[float | None, float | None]:
+    """update 语义：双双省略=不变；双双 None=清空；双数字=更新。"""
+    if x is _UNSET and y is _UNSET:
+        return loc.layout_x, loc.layout_y
+    if x is _UNSET or y is _UNSET:
+        raise WorldError("布局坐标必须同时更新或同时省略")
+    return _coerce_layout(x, y)
 
 
 class WorldEngine:
@@ -189,9 +247,162 @@ class WorldEngine:
                     exit_id=e.id,
                     label=e.label,
                     target_name=target.name if (e.reveal_target and target) else None,
+                    direction=e.direction,
                 )
             )
         return SceneView(player_id=player.player_id, location=location, exits=exits)
+
+    # ---------- 地图编辑（协议无关；数据层不设出度限制） ----------
+
+    async def create_location(
+        self,
+        id: str,
+        name: str,
+        description: str = "",
+        *,
+        layout_x: float | None = None,
+        layout_y: float | None = None,
+    ) -> Location:
+        """新建地块；重复 id / 空 id 或名称抛错。"""
+        async with self._lock:
+            _check_id(id, "地块 id")
+            name = _clean_required(name, "地块名称")
+            description = (description or "").strip()
+            layout_x, layout_y = _coerce_layout(layout_x, layout_y)
+            if id in self.store.locations:
+                raise WorldError(f"地块已存在：{id}")
+            loc = Location(
+                id=id,
+                name=name,
+                description=description,
+                layout_x=layout_x,
+                layout_y=layout_y,
+            )
+            await self.store.save_location(loc)
+            return loc
+
+    async def update_location(
+        self,
+        id: str,
+        *,
+        name: object = _UNSET,
+        description: object = _UNSET,
+        layout_x: object = _UNSET,
+        layout_y: object = _UNSET,
+    ) -> Location:
+        """更新地块属性；缺省参数不变，layout 双双 None 表示清空坐标。"""
+        async with self._lock:
+            loc = self.store.locations.get(id)
+            if loc is None:
+                raise WorldError(f"地块不存在：{id}")
+            name = loc.name if name is _UNSET else _clean_required(name, "地块名称")
+            description = (
+                loc.description
+                if description is _UNSET
+                else (description or "").strip()
+            )
+            x, y = _resolve_layout(loc, layout_x, layout_y)
+            loc = Location(
+                id=id,
+                name=name,
+                description=description,
+                layout_x=x,
+                layout_y=y,
+            )
+            await self.store.save_location(loc)
+            return loc
+
+    async def delete_location(self, id: str) -> None:
+        """删除地块并级联删除所有以它为起点/终点的出边。
+
+        拒绝删除仍被玩家（含 agent）占据的地块，保证 agent 位置与地图一致性。
+        """
+        async with self._lock:
+            if id not in self.store.locations:
+                raise WorldError(f"地块不存在：{id}")
+            for p in self._players.values():
+                if p.location_id == id:
+                    raise WorldError(f"有玩家「{p.name}」位于该地块，无法删除")
+            await self.store.delete_location_with_exits(id)
+
+    async def create_exit(
+        self,
+        id: str,
+        from_id: str,
+        to_id: str,
+        label: str,
+        *,
+        reveal_target: bool = True,
+        direction: str = "up",
+    ) -> Exit:
+        """新建出口；from/to 必须存在，自环出口合法。"""
+        async with self._lock:
+            _check_id(id, "出口 id")
+            label = _clean_required(label, "出口标签")
+            reveal = _check_bool(reveal_target, "reveal_target")
+            direction = _check_direction(direction)
+            if id in self.store.exits:
+                raise WorldError(f"出口已存在：{id}")
+            if from_id not in self.store.locations:
+                raise WorldError(f"出发地块不存在：{from_id}")
+            if to_id not in self.store.locations:
+                raise WorldError(f"目标地块不存在：{to_id}")
+            exit_ = Exit(
+                id=id,
+                from_id=from_id,
+                to_id=to_id,
+                label=label,
+                reveal_target=reveal,
+                direction=direction,
+            )
+            await self.store.save_exit(exit_)
+            return exit_
+
+    async def update_exit(
+        self,
+        id: str,
+        *,
+        to_id: object = _UNSET,
+        label: object = _UNSET,
+        reveal_target: object = _UNSET,
+        direction: object = _UNSET,
+    ) -> Exit:
+        """更新出口；缺省参数不变；from_id 不可变。"""
+        async with self._lock:
+            exit_ = self.store.exits.get(id)
+            if exit_ is None:
+                raise WorldError(f"出口不存在：{id}")
+            to = exit_.to_id if to_id is _UNSET else to_id
+            if to not in self.store.locations:
+                raise WorldError(f"目标地块不存在：{to}")
+            label = (
+                exit_.label if label is _UNSET else _clean_required(label, "出口标签")
+            )
+            reveal = (
+                exit_.reveal_target
+                if reveal_target is _UNSET
+                else _check_bool(reveal_target, "reveal_target")
+            )
+            direction = (
+                exit_.direction if direction is _UNSET else _check_direction(direction)
+            )
+            exit_ = Exit(
+                id=id,
+                from_id=exit_.from_id,
+                to_id=to,
+                label=label,
+                reveal_target=reveal,
+                direction=direction,
+            )
+            await self.store.save_exit(exit_)
+            return exit_
+
+    async def delete_exit(self, id: str) -> None:
+        """删除一条出口。"""
+        async with self._lock:
+            if id not in self.store.exits:
+                raise WorldError(f"出口不存在：{id}")
+            await self.store.delete_exit(id)
 
     # ---------- 超时清理 ----------
 

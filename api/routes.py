@@ -29,4 +29,40 @@ _ROUTES: tuple[tuple[str, str, list[str], str], ...] = (
         ["POST"],
         "注销玩家（页面 unload 尽力调用，超时清理兜底）",
     ),
+    (
+        "/world/location/create",
+        "world_location_create",
+        ["POST"],
+        "新建地块（id/name 必填，layout 为 {x,y} 或 null）",
+    ),
+    (
+        "/world/location/update",
+        "world_location_update",
+        ["POST"],
+        "更新地块（缺省键不变，layout:null=清空坐标）",
+    ),
+    (
+        "/world/location/delete",
+        "world_location_delete",
+        ["POST"],
+        "删除地块（级联删除相关出边，拒绝删除有玩家占据的地块）",
+    ),
+    (
+        "/world/exit/create",
+        "world_exit_create",
+        ["POST"],
+        "新建出口（from_id/to_id/label 必填，direction 为上下左右之一）",
+    ),
+    (
+        "/world/exit/update",
+        "world_exit_update",
+        ["POST"],
+        "更新出口（from_id 不可变）",
+    ),
+    (
+        "/world/exit/delete",
+        "world_exit_delete",
+        ["POST"],
+        "删除一条出口",
+    ),
 )

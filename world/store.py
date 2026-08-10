@@ -5,9 +5,13 @@
 
 表结构：
 - ``locations(id TEXT PK, name, description, layout_json)``
-- ``exits(id TEXT PK, from_id, to_id, label, reveal_target)``
-  （from_id/to_id 引用 locations；同 (from,to) 允许多行——多条不同 label 出边）
+- ``exits(id TEXT PK, from_id, to_id, label, reveal_target, direction)``
+  （from_id/to_id 引用 locations；同 (from,to) 允许多行——多条不同 label 出边；
+  direction 为玩家视图十字槽位方向）
 - ``world_meta(key TEXT PK, value)``（schema 版本 + ``agent_location``）
+
+写操作除 agent 位置外，还包括地图编辑（增删改地块/出口），由调用方
+（WorldEngine）在实例锁内执行，本类不自行加锁。
 
 所有写操作由调用方（WorldEngine）在实例锁内执行，本类不自行加锁；
 aiosqlite 连接内语句排队，写操作直接 ``await``，无需 to_thread。
@@ -21,7 +25,7 @@ import aiosqlite
 
 from .model import Exit, Location, parse_layout, serialize_layout
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
 AGENT_LOCATION_KEY = "agent_location"
 AGENT_START_LOCATION = "town_plaza"
 
@@ -65,17 +69,32 @@ _SEED_LOCATIONS: list[tuple[str, str, str, float, float]] = [
     ),
 ]
 
-_SEED_EXITS: list[tuple[str, str, str, str, bool]] = [
-    # (id, from_id, to_id, label, reveal_target)
+_SEED_EXITS: list[tuple[str, str, str, str, bool, str]] = [
+    # (id, from_id, to_id, label, reveal_target, direction)
+    # direction 为玩家视图十字槽位方向；同一 from 的出边方向互异（编辑器规范）。
     # --- 小镇区：双向街道（成对反向出边） ---
-    ("town_plaza_cafe", "town_plaza", "town_cafe", "沿着东街走向咖啡店", True),
-    ("town_cafe_plaza", "town_cafe", "town_plaza", "回到广场", True),
-    ("town_plaza_park", "town_plaza", "town_park", "穿过南边的公园入口", True),
-    ("town_park_plaza", "town_park", "town_plaza", "回到广场", True),
-    ("town_plaza_library", "town_plaza", "town_library", "沿着北街走向图书馆", True),
-    ("town_library_plaza", "town_library", "town_plaza", "回到广场", True),
-    ("town_plaza_grocery", "town_plaza", "town_grocery", "走向东边的杂货店", True),
-    ("town_grocery_plaza", "town_grocery", "town_plaza", "回到广场", True),
+    ("town_plaza_cafe", "town_plaza", "town_cafe", "沿着东街走向咖啡店", True, "up"),
+    ("town_cafe_plaza", "town_cafe", "town_plaza", "回到广场", True, "left"),
+    ("town_plaza_park", "town_plaza", "town_park", "穿过南边的公园入口", True, "down"),
+    ("town_park_plaza", "town_park", "town_plaza", "回到广场", True, "left"),
+    (
+        "town_plaza_library",
+        "town_plaza",
+        "town_library",
+        "沿着北街走向图书馆",
+        True,
+        "right",
+    ),
+    ("town_library_plaza", "town_library", "town_plaza", "回到广场", True, "left"),
+    (
+        "town_plaza_grocery",
+        "town_plaza",
+        "town_grocery",
+        "走向东边的杂货店",
+        True,
+        "left",
+    ),
+    ("town_grocery_plaza", "town_grocery", "town_plaza", "回到广场", True, "left"),
     # --- 单向捷径（只有 a→b，无 b→a） ---
     (
         "town_grocery_park",
@@ -83,6 +102,7 @@ _SEED_EXITS: list[tuple[str, str, str, str, bool]] = [
         "town_park",
         "穿过杂货店后门的小巷（捷径）",
         True,
+        "right",
     ),
     (
         "town_cafe_library",
@@ -90,18 +110,33 @@ _SEED_EXITS: list[tuple[str, str, str, str, bool]] = [
         "town_library",
         "沿着咖啡店后巷走向图书馆",
         True,
+        "right",
     ),
     # --- 迷雾区入口 ---
-    ("town_park_forest", "town_park", "mist_forest", "向东走进迷雾森林", True),
-    ("mist_forest_park", "mist_forest", "town_park", "沿着来时的小路返回公园", True),
+    ("town_park_forest", "town_park", "mist_forest", "向东走进迷雾森林", True, "right"),
+    (
+        "mist_forest_park",
+        "mist_forest",
+        "town_park",
+        "沿着来时的小路返回公园",
+        True,
+        "up",
+    ),
     # --- 迷雾区：多边同目标（"向左走"/"向右走"通向同一目标） + 隐藏目标 ---
-    ("mist_forest_left", "mist_forest", "mist_depth", "向左走", False),
-    ("mist_forest_right", "mist_forest", "mist_depth", "向右走", True),
+    ("mist_forest_left", "mist_forest", "mist_depth", "向左走", False, "left"),
+    ("mist_forest_right", "mist_forest", "mist_depth", "向右走", True, "right"),
     # --- 迷雾区：环路（迷雾森林 → 迷雾深处 → 迷雾空地 → 迷雾森林） ---
-    ("mist_forest_north", "mist_forest", "mist_clearing", "拨开树丛向北摸索", True),
-    ("mist_depth_forward", "mist_depth", "mist_clearing", "继续摸索前进", True),
-    ("mist_depth_back", "mist_depth", "mist_forest", "转身往回走", True),
-    ("mist_clearing_back", "mist_clearing", "mist_forest", "沿来路返回", True),
+    (
+        "mist_forest_north",
+        "mist_forest",
+        "mist_clearing",
+        "拨开树丛向北摸索",
+        True,
+        "down",
+    ),
+    ("mist_depth_forward", "mist_depth", "mist_clearing", "继续摸索前进", True, "up"),
+    ("mist_depth_back", "mist_depth", "mist_forest", "转身往回走", True, "down"),
+    ("mist_clearing_back", "mist_clearing", "mist_forest", "沿来路返回", True, "left"),
 ]
 
 
@@ -151,7 +186,8 @@ class WorldStore:
                 from_id TEXT NOT NULL REFERENCES locations(id),
                 to_id TEXT NOT NULL REFERENCES locations(id),
                 label TEXT NOT NULL,
-                reveal_target INTEGER NOT NULL DEFAULT 1
+                reveal_target INTEGER NOT NULL DEFAULT 1,
+                direction TEXT NOT NULL DEFAULT 'up'
             );
             CREATE TABLE IF NOT EXISTS world_meta (
                 key TEXT PRIMARY KEY,
@@ -159,11 +195,23 @@ class WorldStore:
             );
             """
         )
+        await self._migrate()
         await self._conn.execute(
             "INSERT OR REPLACE INTO world_meta(key, value) VALUES('schema_version', ?)",
             (SCHEMA_VERSION,),
         )
         await self._conn.commit()
+
+    async def _migrate(self) -> None:
+        """老库（v1）增量迁移：exits 表补 direction 列。"""
+        assert self._conn is not None
+        cur = await self._conn.execute("PRAGMA table_info(exits)")
+        columns = {row["name"] for row in await cur.fetchall()}
+        if "direction" not in columns:
+            await self._conn.execute(
+                "ALTER TABLE exits ADD COLUMN direction TEXT NOT NULL DEFAULT 'up'"
+            )
+            await self._conn.commit()
 
     async def _seed_if_empty(self) -> None:
         assert self._conn is not None
@@ -179,7 +227,8 @@ class WorldStore:
             ],
         )
         await self._conn.executemany(
-            "INSERT INTO exits(id, from_id, to_id, label, reveal_target) VALUES(?, ?, ?, ?, ?)",
+            "INSERT INTO exits(id, from_id, to_id, label, reveal_target, direction) "
+            "VALUES(?, ?, ?, ?, ?, ?)",
             _SEED_EXITS,
         )
         await self._conn.execute(
@@ -212,6 +261,7 @@ class WorldStore:
                 to_id=row["to_id"],
                 label=row["label"],
                 reveal_target=bool(row["reveal_target"]),
+                direction=row["direction"],
             )
             self.exits[exit_.id] = exit_
             self.exits_by_from.setdefault(exit_.from_id, []).append(exit_)
@@ -234,3 +284,87 @@ class WorldStore:
         )
         await self._conn.commit()
         self.agent_location_id = location_id
+
+    # ---------- 地图编辑写操作（DB 先、内存后，调用方持锁） ----------
+
+    async def save_location(self, loc: Location) -> None:
+        """写回/新建一个地块（整体替换对象）。"""
+        assert self._conn is not None
+        await self._conn.execute(
+            "INSERT OR REPLACE INTO locations(id, name, description, layout_json) "
+            "VALUES(?, ?, ?, ?)",
+            (
+                loc.id,
+                loc.name,
+                loc.description,
+                serialize_layout(loc.layout_x, loc.layout_y),
+            ),
+        )
+        await self._conn.commit()
+        self.locations[loc.id] = loc
+
+    async def delete_location_with_exits(self, location_id: str) -> None:
+        """删除地块并级联删除所有以它为起点或终点的出边。"""
+        assert self._conn is not None
+        await self._conn.execute(
+            "DELETE FROM exits WHERE from_id = ? OR to_id = ?",
+            (location_id, location_id),
+        )
+        await self._conn.execute("DELETE FROM locations WHERE id = ?", (location_id,))
+        await self._conn.commit()
+        affected = [
+            eid
+            for eid, e in self.exits.items()
+            if e.from_id == location_id or e.to_id == location_id
+        ]
+        for eid in affected:
+            exit_ = self.exits.pop(eid)
+            bucket = self.exits_by_from.get(exit_.from_id)
+            if bucket is not None:
+                self.exits_by_from[exit_.from_id] = [e for e in bucket if e.id != eid]
+                if not self.exits_by_from[exit_.from_id]:
+                    del self.exits_by_from[exit_.from_id]
+        self.locations.pop(location_id, None)
+
+    async def save_exit(self, exit_: Exit) -> None:
+        """写回/新建一条出边（from_id 变更时维护旧桶）。"""
+        assert self._conn is not None
+        old = self.exits.get(exit_.id)
+        await self._conn.execute(
+            "INSERT OR REPLACE INTO exits(id, from_id, to_id, label, reveal_target, direction) "
+            "VALUES(?, ?, ?, ?, ?, ?)",
+            (
+                exit_.id,
+                exit_.from_id,
+                exit_.to_id,
+                exit_.label,
+                int(exit_.reveal_target),
+                exit_.direction,
+            ),
+        )
+        await self._conn.commit()
+        if old is not None:
+            bucket = self.exits_by_from.get(old.from_id)
+            if bucket is not None:
+                self.exits_by_from[old.from_id] = [
+                    e for e in bucket if e.id != exit_.id
+                ]
+                if not self.exits_by_from[old.from_id]:
+                    del self.exits_by_from[old.from_id]
+        self.exits[exit_.id] = exit_
+        self.exits_by_from.setdefault(exit_.from_id, []).append(exit_)
+
+    async def delete_exit(self, exit_id: str) -> None:
+        """删除一条出边。"""
+        assert self._conn is not None
+        await self._conn.execute("DELETE FROM exits WHERE id = ?", (exit_id,))
+        await self._conn.commit()
+        exit_ = self.exits.pop(exit_id, None)
+        if exit_ is not None:
+            bucket = self.exits_by_from.get(exit_.from_id)
+            if bucket is not None:
+                self.exits_by_from[exit_.from_id] = [
+                    e for e in bucket if e.id != exit_id
+                ]
+                if not self.exits_by_from[exit_.from_id]:
+                    del self.exits_by_from[exit_.from_id]

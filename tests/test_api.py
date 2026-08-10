@@ -24,6 +24,7 @@ from astrbot.api.web import (  # noqa: E402
     PluginRequest,
     bind_request_context,
 )
+from astrbot_plugin_worlditor.api.edit import EditAPI  # noqa: E402
 from astrbot_plugin_worlditor.api.play import PlayAPI  # noqa: E402
 from astrbot_plugin_worlditor.api.routes import _ROUTES  # noqa: E402
 from astrbot_plugin_worlditor.api.state import StateAPI  # noqa: E402
@@ -37,7 +38,7 @@ from astrbot_plugin_worlditor.world.store import (  # noqa: E402
 )
 
 
-class FakePlugin(StateAPI, PlayAPI):
+class FakePlugin(StateAPI, PlayAPI, EditAPI):
     """只装配 mixin 与 engine，模拟 main.py 中 Star 的 handler 挂载形态。"""
 
     def __init__(self, engine: WorldEngine) -> None:
@@ -229,6 +230,201 @@ def test_deregister_handler(tmp_path):
     _run(_scenario(tmp_path, fn))
 
 
+def test_location_create_handler(tmp_path):
+    """POST /world/location/create：新建地块并反映到 world/state。"""
+
+    async def fn(plugin: FakePlugin):
+        resp = await call_handler(
+            plugin,
+            "world_location_create",
+            body={
+                "id": "beach",
+                "name": "沙滩",
+                "description": "海边。",
+                "layout": {"x": 600, "y": 500},
+            },
+        )
+        data = json.loads(resp.body)
+        assert resp.status_code == 200
+        assert data["location"]["id"] == "beach"
+        assert data["location"]["layout"] == {"x": 600, "y": 500}
+        state = json.loads((await call_handler(plugin, "world_state")).body)
+        assert len(state["locations"]) == 9
+        assert state["exits"][0]["direction"] in {"up", "right", "down", "left"}
+
+    _run(_scenario(tmp_path, fn))
+
+
+def test_location_create_handler_invalid(tmp_path):
+    """新建地块：重复 id / 缺 name / layout 非法（bool、非对象）→ 400。"""
+
+    async def fn(plugin: FakePlugin):
+        base = {"id": "beach", "name": "沙滩"}
+        resp = await call_handler(plugin, "world_location_create", body=base)
+        assert resp.status_code == 200
+        # 重复 id
+        resp2 = await call_handler(plugin, "world_location_create", body=base)
+        assert json.loads(resp2.body)["status"] == "error"
+        assert resp2.status_code == 400
+        # 缺 name
+        resp3 = await call_handler(plugin, "world_location_create", body={"id": "x"})
+        assert resp3.status_code == 400
+        # layout 含 bool
+        resp4 = await call_handler(
+            plugin,
+            "world_location_create",
+            body={"id": "y", "name": "Y", "layout": {"x": True, "y": 1}},
+        )
+        assert resp4.status_code == 400
+        # layout 非对象
+        resp5 = await call_handler(
+            plugin, "world_location_create", body={"id": "z", "name": "Z", "layout": 3}
+        )
+        assert resp5.status_code == 400
+
+    _run(_scenario(tmp_path, fn))
+
+
+def test_location_update_handler(tmp_path):
+    """更新地块：改名、改坐标、layout null 清空坐标；不存在 → 400。"""
+
+    async def fn(plugin: FakePlugin):
+        resp = await call_handler(
+            plugin,
+            "world_location_update",
+            body={"id": "town_cafe", "name": "新咖啡店"},
+        )
+        data = json.loads(resp.body)
+        assert data["location"]["name"] == "新咖啡店"
+        resp2 = await call_handler(
+            plugin,
+            "world_location_update",
+            body={"id": "town_cafe", "layout": {"x": 1, "y": 2}},
+        )
+        assert json.loads(resp2.body)["location"]["layout"] == {"x": 1, "y": 2}
+        resp3 = await call_handler(
+            plugin, "world_location_update", body={"id": "town_cafe", "layout": None}
+        )
+        assert json.loads(resp3.body)["location"]["layout"] is None
+        resp4 = await call_handler(
+            plugin, "world_location_update", body={"id": "ghost", "name": "X"}
+        )
+        assert resp4.status_code == 400
+
+    _run(_scenario(tmp_path, fn))
+
+
+def test_location_delete_handler(tmp_path):
+    """删除地块：成功、拒绝删除 agent 所在地块、world/state 反映。"""
+
+    async def fn(plugin: FakePlugin):
+        resp = await call_handler(
+            plugin, "world_location_delete", body={"id": "town_library"}
+        )
+        assert json.loads(resp.body)["ok"] is True
+        assert plugin.engine.get_location("town_library") is None
+        assert all(e.from_id != "town_library" for e in plugin.engine.list_all_exits())
+        resp2 = await call_handler(
+            plugin,
+            "world_location_delete",
+            body={"id": AGENT_START_LOCATION},
+        )
+        assert resp2.status_code == 400
+        state = json.loads((await call_handler(plugin, "world_state")).body)
+        assert len(state["locations"]) == 7
+
+    _run(_scenario(tmp_path, fn))
+
+
+def test_exit_create_handler(tmp_path):
+    """新建出口：成功（含 direction）、非法 direction / 不存在 from → 400。"""
+
+    async def fn(plugin: FakePlugin):
+        resp = await call_handler(
+            plugin,
+            "world_exit_create",
+            body={
+                "id": "beach_gate",
+                "from_id": "town_cafe",
+                "to_id": "town_park",
+                "label": "穿过后门",
+                "reveal_target": False,
+                "direction": "left",
+            },
+        )
+        data = json.loads(resp.body)
+        assert data["exit"]["direction"] == "left"
+        assert data["exit"]["reveal_target"] is False
+        assert any(e.id == "beach_gate" for e in plugin.engine.list_exits("town_cafe"))
+        # 非法 direction
+        resp2 = await call_handler(
+            plugin,
+            "world_exit_create",
+            body={
+                "id": "x",
+                "from_id": "town_cafe",
+                "to_id": "town_park",
+                "label": "X",
+                "direction": "diagonal",
+            },
+        )
+        assert resp2.status_code == 400
+        # from 不存在
+        resp3 = await call_handler(
+            plugin,
+            "world_exit_create",
+            body={"id": "y", "from_id": "ghost", "to_id": "town_park", "label": "Y"},
+        )
+        assert resp3.status_code == 400
+
+    _run(_scenario(tmp_path, fn))
+
+
+def test_exit_update_handler(tmp_path):
+    """更新出口：改 label/direction/reveal_target；缺 id → 400。"""
+
+    async def fn(plugin: FakePlugin):
+        resp = await call_handler(
+            plugin,
+            "world_exit_update",
+            body={
+                "id": "town_plaza_cafe",
+                "label": "走向新咖啡店",
+                "direction": "left",
+                "reveal_target": False,
+            },
+        )
+        data = json.loads(resp.body)
+        assert data["exit"]["label"] == "走向新咖啡店"
+        assert data["exit"]["direction"] == "left"
+        assert data["exit"]["reveal_target"] is False
+        assert data["exit"]["from_id"] == "town_plaza"
+        resp2 = await call_handler(plugin, "world_exit_update", body={"label": "X"})
+        assert resp2.status_code == 400
+
+    _run(_scenario(tmp_path, fn))
+
+
+def test_exit_delete_handler(tmp_path):
+    """删除出口：成功后按该 exit_id 移动 → 400。"""
+
+    async def fn(plugin: FakePlugin):
+        resp = await call_handler(
+            plugin, "world_exit_delete", body={"id": "town_plaza_cafe"}
+        )
+        assert json.loads(resp.body)["ok"] is True
+        reg = json.loads((await call_handler(plugin, "world_register", body={})).body)
+        resp2 = await call_handler(
+            plugin,
+            "world_move",
+            body={"player_id": reg["player_id"], "exit_id": "town_plaza_cafe"},
+        )
+        assert resp2.status_code == 400
+        assert "出口不存在" in json.loads(resp2.body)["message"]
+
+    _run(_scenario(tmp_path, fn))
+
+
 def test_routes_table_complete():
     """路由表与 handler 存在性：每个端点都能在 mixin 类上解析到方法。"""
     paths = {path for path, _, _, _ in _ROUTES}
@@ -237,6 +433,12 @@ def test_routes_table_complete():
         "/world/player/register",
         "/world/move",
         "/world/player/deregister",
+        "/world/location/create",
+        "/world/location/update",
+        "/world/location/delete",
+        "/world/exit/create",
+        "/world/exit/update",
+        "/world/exit/delete",
     }
     for _, handler, methods, desc in _ROUTES:
         assert methods, f"路由 {handler} 缺少 HTTP 方法"

@@ -12,6 +12,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+DIRECTIONS = ("up", "right", "down", "left")
+
 
 @dataclass
 class Location:
@@ -45,7 +47,9 @@ class Exit:
     """一条带标签的有向出口（有向图边）。
 
     ``reveal_target=False`` 时场景中不暴露目标地块名（显示 `???`），是
-    "迷路"效果的核心。
+    "迷路"效果的核心。``direction`` 为玩家视图十字布局的槽位方向
+    （上/右/下/左），是结构化出口语义，与布局坐标无关；编辑器保证同一
+    出发地块的出边方向互异（数据层不强制）。
     """
 
     id: str
@@ -53,6 +57,7 @@ class Exit:
     to_id: str
     label: str
     reveal_target: bool = True
+    direction: str = "up"
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -61,6 +66,7 @@ class Exit:
             "to_id": self.to_id,
             "label": self.label,
             "reveal_target": self.reveal_target,
+            "direction": self.direction,
         }
 
 
@@ -88,6 +94,7 @@ class ExitView:
     exit_id: str
     label: str
     target_name: str | None
+    direction: str = "up"
 
 
 @dataclass
@@ -107,6 +114,7 @@ class SceneView:
                     "exit_id": e.exit_id,
                     "label": e.label,
                     "target_name": e.target_name,
+                    "direction": e.direction,
                 }
                 for e in self.exits
             ],

@@ -19,14 +19,14 @@ from astrbot.api import llm_tool, logger
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.star import Context, Star, StarTools
 
-from .api import _ROUTES, PlayAPI, StateAPI
+from .api import _ROUTES, EditAPI, PlayAPI, StateAPI
 from .world.engine import AGENT_PLAYER_ID, WorldEngine, WorldError, scene_to_text
 from .world.store import WorldStore
 
 PLUGIN_NAME = "astrbot_plugin_worlditor"
 
 
-class WorlditorPlugin(Star, StateAPI, PlayAPI):
+class WorlditorPlugin(Star, StateAPI, PlayAPI, EditAPI):
     """世界编辑器的入口：装配引擎、注册 Web API 与 LLM 工具。"""
 
     def __init__(self, context: Context, config: dict | None = None) -> None:
