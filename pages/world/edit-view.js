@@ -1,12 +1,12 @@
-// edit-view.js — 编辑模式：无限画布 + 缩放，交替网格（地块/连接块/占位小格）+ 右侧详情栏
+// edit-view.js — 编辑模式：可滚动画布 + 缩放，交替网格（地块/连接块/占位小格）+ 右侧详情栏
 // 画布模型：绝对定位像素渲染（地块/连接块/占位小格按坐标摆放），外层 #graph 滚动平移；
 // Ctrl/⌘+滚轮（含触控板捏合）以光标为中心缩放，工具条提供 − / + / 百分比 / 适应按钮。
-// 无限延伸：内容四周保留虚拟边距（pad），滚动接近边缘时自动扩展画布——不再受内容边界
-// 限制；内容边界外渲染一圈空地块（HALO），编辑模式点击可新建 → 世界向外生长，点击网格
-// 背景可就近槽位新建。地块格只显示名字与 id（+ 出生点徽标）；连接块内画表示方向的线条
-// （单向箭头 / 双向双箭头 / 空块=不连接），不画方向文字；非相邻连接（目的地可自选）以
-// 虚线强调条显示在出发方向的连接块内（替代原「分身」概念，无展开/收起按钮）。查看模式
-// 只读；编辑模式可增删改。
+// 画布尺寸 = 内容边界 + 四周固定留白（PAD）：空白延伸有限，只有新增地块（内容生长）
+// 才驱动画布变大——点击内容边界外的空地块（HALO）或网格背景就近槽位新建即扩展世界。
+// 视口与内容无交集时自动回到内容（保证已有地块总在可视范围内）。地块格只显示名字与 id
+// （+ 出生点徽标）；连接块内画表示方向的线条（单向箭头 / 双向双箭头 / 空块=不连接），不画
+// 方向文字；非相邻连接（目的地可自选）以虚线强调条显示在出发方向的连接块内（替代原
+// 「分身」概念，无展开/收起按钮）。查看模式只读；编辑模式可增删改。
 
 import { $, state, DIR_OFFSETS, computePositions, cellKey } from "./shared.js";
 import {
@@ -32,7 +32,7 @@ const HALO = 2; // 内容边界外渲染的空地块圈数（可点击新建 →
 const ZOOM_MIN = 0.2;
 const ZOOM_MAX = 4;
 const ZOOM_STEP = 1.25;
-const EDGE_LIMIT = 600; // 视图边缘距画布边缘小于此值时扩展虚拟边距
+const PAD = 800; // 内容四周固定留白（base px）：空白延伸有限，新增地块驱动画布生长
 
 let onMutate = null; // app 传入：mutation 后 re-fetch 世界并整体重绘
 let currentWorld = null;
@@ -40,7 +40,6 @@ let graphEl = null;
 let canvasEl = null;
 let gridEl = null;
 let zoom = 1;
-let pad = 1200; // 内容四周虚拟边距（base px），滚动近边缘时增长 → 无限延伸
 let contentW = 0; // 内容尺寸（base px），renderEdit 时计算
 let contentH = 0;
 let bounds = { minCol: 0, minRow: 0 }; // 供背景点击 → 槽位坐标换算
@@ -59,11 +58,11 @@ const locX = (rc) => rc * PITCH;
 const connHX = (rc) => rc * PITCH + CELL + GAP;
 const locY = (rr) => rr * PITCH;
 const connVY = (rr) => rr * PITCH + CELL + GAP;
-// 画布内绝对坐标（内容原点在 (pad, pad)）
-const X = (rc) => pad + locX(rc);
-const HX = (rc) => pad + connHX(rc);
-const Y = (rr) => pad + locY(rr);
-const VY = (rr) => pad + connVY(rr);
+// 画布内绝对坐标（内容原点在 (PAD, PAD)）
+const X = (rc) => PAD + locX(rc);
+const HX = (rc) => PAD + connHX(rc);
+const Y = (rr) => PAD + locY(rr);
+const VY = (rr) => PAD + connVY(rr);
 
 // 网格背景：交替轨道边界线（地块轨 / 连接轨），随缩放保持清晰
 const GRID_LINE = "color-mix(in srgb, var(--border) 28%, transparent)";
@@ -86,7 +85,6 @@ export function initEditView(options) {
   $("#zoom-pct").addEventListener("click", () => setZoom(1));
   $("#zoom-fit").addEventListener("click", fitView);
   graphEl.addEventListener("wheel", onWheel, { passive: false });
-  graphEl.addEventListener("scroll", () => ensureCanvas(), { passive: true });
   graphEl.addEventListener("click", onBackgroundClick);
   updateZoomPct();
 
@@ -359,7 +357,7 @@ export function renderEdit(world) {
   } else {
     centerContent();
   }
-  ensureCanvas();
+  ensureContentVisible();
   renderPanel(world);
 }
 
@@ -522,7 +520,7 @@ function setZoom(next, cx, cy) {
   }
   applyCanvas();
   updateZoomPct();
-  ensureCanvas();
+  ensureContentVisible();
 }
 
 function fitView() {
@@ -532,8 +530,8 @@ function fitView() {
   const rect = graphEl.getBoundingClientRect();
   const target = Math.min((rect.width - 48) / contentW, (rect.height - 48) / contentH);
   setZoom(clamp(target, ZOOM_MIN, ZOOM_MAX));
-  const cL = pad * zoom;
-  const cT = pad * zoom;
+  const cL = PAD * zoom;
+  const cT = PAD * zoom;
   graphEl.scrollLeft = Math.max(0, cL + (contentW * zoom - graphEl.clientWidth) / 2);
   graphEl.scrollTop = Math.max(0, cT + (contentH * zoom - graphEl.clientHeight) / 2);
 }
@@ -542,17 +540,17 @@ function centerContent() {
   if (!canvasEl) {
     return;
   }
-  graphEl.scrollLeft = Math.max(0, pad * zoom + (contentW * zoom - graphEl.clientWidth) / 2);
-  graphEl.scrollTop = Math.max(0, pad * zoom + (contentH * zoom - graphEl.clientHeight) / 2);
+  graphEl.scrollLeft = Math.max(0, PAD * zoom + (contentW * zoom - graphEl.clientWidth) / 2);
+  graphEl.scrollTop = Math.max(0, PAD * zoom + (contentH * zoom - graphEl.clientHeight) / 2);
 }
 
-// 画布尺寸 = 内容 + 四周虚拟边距，按 zoom 设置布局尺寸与缩放变换
+// 画布尺寸 = 内容 + 四周固定留白，按 zoom 设置布局尺寸与缩放变换
 function applyCanvas() {
   if (!canvasEl) {
     return;
   }
-  const baseW = contentW + 2 * pad;
-  const baseH = contentH + 2 * pad;
+  const baseW = contentW + 2 * PAD;
+  const baseH = contentH + 2 * PAD;
   canvasEl.style.width = `${baseW * zoom}px`;
   canvasEl.style.height = `${baseH * zoom}px`;
   canvasEl.style.transform = `scale(${zoom})`;
@@ -561,25 +559,25 @@ function applyCanvas() {
   gridEl.style.backgroundSize = `${PITCH * zoom}px ${PITCH * zoom}px`;
 }
 
-// 视图边缘距画布边缘过近 → 扩展虚拟边距（并补偿滚动保持内容视觉不动）→ 无限延伸
-function ensureCanvas() {
+// 视口与内容无交集 → 回到内容：保证已有地块总在可视范围内（修复 hidden 状态或
+// 内容变小后滚动位置错乱导致的「找不到地块」）
+function ensureContentVisible() {
   if (!canvasEl) {
     return;
   }
-  const baseW = contentW + 2 * pad;
-  const baseH = contentH + 2 * pad;
+  const vw = graphEl.clientWidth;
+  const vh = graphEl.clientHeight;
+  if (vw <= 0 || vh <= 0) {
+    return; // 视图尚未布局（hidden）时不动滚动位置
+  }
   const vL = graphEl.scrollLeft;
   const vT = graphEl.scrollTop;
-  const remL = vL;
-  const remT = vT;
-  const remR = baseW * zoom - (vL + graphEl.clientWidth);
-  const remB = baseH * zoom - (vT + graphEl.clientHeight);
-  if (remL < EDGE_LIMIT || remT < EDGE_LIMIT || remR < EDGE_LIMIT || remB < EDGE_LIMIT) {
-    const grow = EDGE_LIMIT + 2000;
-    pad += grow;
-    graphEl.scrollLeft += grow * zoom;
-    graphEl.scrollTop += grow * zoom;
-    applyCanvas();
+  const cL = PAD * zoom;
+  const cT = PAD * zoom;
+  const cR = cL + contentW * zoom;
+  const cB = cT + contentH * zoom;
+  if (cR <= vL || cB <= vT || cL >= vL + vw || cT >= vT + vh) {
+    centerContent();
   }
 }
 
@@ -602,8 +600,8 @@ function onBackgroundClick(event) {
     return;
   }
   const rect = graphEl.getBoundingClientRect();
-  const bx = (event.clientX - rect.left + graphEl.scrollLeft) / zoom - pad;
-  const by = (event.clientY - rect.top + graphEl.scrollTop) / zoom - pad;
+  const bx = (event.clientX - rect.left + graphEl.scrollLeft) / zoom - PAD;
+  const by = (event.clientY - rect.top + graphEl.scrollTop) / zoom - PAD;
   const rc = Math.floor(bx / PITCH);
   const rr = Math.floor(by / PITCH);
   selectSlot(bounds.minCol + rc, bounds.minRow + rr);
