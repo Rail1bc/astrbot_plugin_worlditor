@@ -386,9 +386,11 @@ body {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   grid-template-rows: repeat(3, 1fr);
-  gap: 10px;
+  gap: 8px;
   aspect-ratio: 1;
   width: 100%;
+  /* 格收缩到内容大小并居中（十字紧凑排布），不再占满 1/3 棋盘 */
+  place-items: center;
 }
 
 .play-cell {
@@ -398,12 +400,14 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 6px 8px;
+  padding: 4px 8px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--panel);
   box-shadow: var(--shadow);
   text-align: center;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .play-slot {
@@ -427,11 +431,12 @@ body {
   border-radius: 999px;
   background: var(--panel);
   box-shadow: var(--shadow);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 1.3;
+  text-align: center;
+  /* 长名允许换行（移动端窄屏），不再省略号截断 */
+  overflow-wrap: anywhere;
 }
 
 .play-up {
@@ -451,12 +456,13 @@ body {
 }
 
 .play-target-name {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.3;
+  text-align: center;
+  /* 长名在格内换行（上限为所在格宽），移动端窄屏友好 */
+  overflow-wrap: anywhere;
 }
 
 .play-unknown {

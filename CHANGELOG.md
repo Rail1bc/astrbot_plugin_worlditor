@@ -5,6 +5,11 @@
 
 ## [Unreleased] - 2026-08-11
 
+### 🛠 玩家视图目标格缩小 + 长名换行
+
+- **目标格缩小**：目标格不再占满棋盘 1/3 的块，改为内容自适应收缩并居中（`place-items: center`），减小内边距与字号，十字排布更紧凑。
+- **长名允许换行**：目标名与中心地块名取消省略号截断，超长时在格内换行（`overflow-wrap: anywhere`），适配移动端窄屏。
+
 ### 🐛 修复视图切换失效
 
 - **修复两个视图同时渲染 / 无法切换到玩家视图**：`#view-edit` / `#view-play` 在 CSS 中设置了 `display: flex`，作者样式覆盖 UA 的 `[hidden] { display: none }`，导致 `hidden` 属性失效——加载时玩家视图作为空容器叠在编辑视图下方，切到玩家模式时编辑视图也不消失。新增全局 `[hidden] { display: none !important; }` 兜底（`#play-error` 的 `display: flex` 同隐患一并覆盖）。
