@@ -5,6 +5,10 @@
 
 ## [Unreleased] - 2026-08-11
 
+### 🐛 修复视图切换失效
+
+- **修复两个视图同时渲染 / 无法切换到玩家视图**：`#view-edit` / `#view-play` 在 CSS 中设置了 `display: flex`，作者样式覆盖 UA 的 `[hidden] { display: none }`，导致 `hidden` 属性失效——加载时玩家视图作为空容器叠在编辑视图下方，切到玩家模式时编辑视图也不消失。新增全局 `[hidden] { display: none !important; }` 兜底（`#play-error` 的 `display: flex` 同隐患一并覆盖）。
+
 ### 🛠 玩家视图重构
 
 - **玩家视图布局重构**：地图 div 中间是只含地块名称的小块（移除说明文本与玩家 id），上下左右直接连接 1 跳可达地块；当前地块说明文本移到与地图 div 平级的独立信息 div（实体系统后续版本再接入）。

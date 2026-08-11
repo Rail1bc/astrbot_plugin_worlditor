@@ -34,6 +34,14 @@ html[data-theme="dark"] {
   box-sizing: border-box;
 }
 
+/* hidden 属性必须优先于任何 display 规则：视图切换依赖它，而
+   #view-edit / #view-play / #play-error 等元素在 CSS 中设置了
+   display:flex，作者样式会覆盖 UA 的 [hidden]{display:none}，导致
+   隐藏不生效、两个视图同时渲染。 */
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   height: 100vh;
