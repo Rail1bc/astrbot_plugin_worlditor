@@ -247,14 +247,28 @@ body {
   pointer-events: none;
 }
 
-/* 玩家视图十字布局 */
-.play-grid {
+/* 玩家视图：地图 div + 平级信息 div */
+.play-map {
   width: 100%;
   max-width: 760px;
-  margin: 24px auto;
+  margin: 24px auto 0;
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.play-info {
+  width: 100%;
+  max-width: 760px;
+  margin: 14px auto 24px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
 }
 
 .play-board {
@@ -290,10 +304,24 @@ body {
   border-color: var(--accent);
 }
 
+/* 中心小块：只含地块名称，很小的胶囊 */
 .play-center {
   grid-area: 2 / 2;
-  border-color: var(--current);
-  border-width: 2px;
+  position: relative;
+  z-index: 1;
+  justify-self: center;
+  align-self: center;
+  max-width: 90%;
+  padding: 6px 16px;
+  border: 2px solid var(--current);
+  border-radius: 999px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .play-up {
@@ -310,22 +338,6 @@ body {
 
 .play-left {
   grid-area: 2 / 1;
-}
-
-.play-loc-name {
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.play-loc-desc {
-  font-size: 13px;
-  color: var(--text-dim);
-}
-
-.play-pid {
-  font-size: 11px;
-  color: var(--text-dim);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 .play-target-name {

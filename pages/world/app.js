@@ -44,7 +44,7 @@ function render() {
   if (state.mode === "edit") {
     renderEdit(state.world);
   } else {
-    renderPlay(state.world, state.playerId, moveTo);
+    renderPlay(state.world, moveTo);
   }
   const locEl = $("#loc-name");
   if (state.world && state.world.player) {

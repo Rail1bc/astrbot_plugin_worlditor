@@ -10,6 +10,25 @@ const DIRECTIONS = [
   ["left", "左"],
 ];
 
+// 同 from 的出边方向互异（编辑器保证）：新建时默认选空闲方向，避免意外冲突
+function refreshDirectionDefault(fromId, radios) {
+  const exits = (state.world && state.world.exits) || [];
+  const used = new Set();
+  for (const e of exits) {
+    if (e.from_id === fromId) {
+      used.add(e.direction);
+    }
+  }
+  const checked = radios.find((r) => r.checked);
+  if (checked && !used.has(checked.value)) {
+    return; // 当前选中方向未被占用，保持
+  }
+  const free = radios.find((r) => !used.has(r.value));
+  if (free) {
+    free.checked = true;
+  }
+}
+
 function field(labelText, input) {
   const wrap = document.createElement("div");
   wrap.className = "form-field";
@@ -200,6 +219,7 @@ export function exitForm(exit, onSubmit) {
 
   const directionWrap = document.createElement("div");
   directionWrap.className = "form-radio-group";
+  const radios = [];
   for (const [value, text] of DIRECTIONS) {
     const label = document.createElement("label");
     label.className = "form-radio";
@@ -207,10 +227,20 @@ export function exitForm(exit, onSubmit) {
     radio.type = "radio";
     radio.name = "direction";
     radio.value = value;
-    radio.checked = exit ? exit.direction === value : value === "up";
+    if (exit) {
+      radio.checked = exit.direction === value;
+    }
     label.appendChild(radio);
     label.appendChild(document.createTextNode(text));
     directionWrap.appendChild(label);
+    radios.push(radio);
+  }
+  if (!exit) {
+    // 新建：默认选出发地块第一个空闲方向；切换出发地块冲突时自动改选
+    refreshDirectionDefault(fromInput.value, radios);
+    fromInput.addEventListener("change", () =>
+      refreshDirectionDefault(fromInput.value, radios)
+    );
   }
 
   form.appendChild(field("id", idInput));

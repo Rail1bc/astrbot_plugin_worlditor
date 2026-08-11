@@ -1,6 +1,8 @@
 // play-view.js — 玩家模式：当前地块 + 有出边连接的 1 跳目标
-// 十字布局（上/右/下/左）；无连接的槽位不可见；所有边一视同仁（无箭头简单连线，
-// 不查反向边、不画方向）；隐藏目标显示 ???；无回环（自环出口照常占槽位）；
+// 地图 div（#play-map）：中间是只含地块名称的小块，上下左右直接连接 1 跳可达地块
+// （十字布局，无连接的槽位不可见；所有边一视同仁，无箭头简单连线、不查反向边、
+// 不画方向；隐藏目标显示 ???；无回环——自环出口照常占槽位）；
+// 平级信息 div（#play-info）：当前地块说明文本；
 // 违规地图（出度>4 或同方向冲突）折叠「+N」展开全部出口列表。
 
 import { $ } from "./shared.js";
@@ -17,10 +19,13 @@ const DIR_POS = {
   left: [SIDE, 50],
 };
 
-export function renderPlay(world, playerId, moveTo) {
-  const container = $("#play-grid");
+export function renderPlay(world, moveTo) {
+  const mapEl = $("#play-map");
+  const infoEl = $("#play-info");
   const errorEl = $("#play-error");
-  container.textContent = "";
+  mapEl.textContent = "";
+  infoEl.textContent = "";
+  infoEl.hidden = true;
   errorEl.hidden = true;
 
   if (!world || !world.player || !world.player.scene) {
@@ -47,25 +52,15 @@ export function renderPlay(world, playerId, moveTo) {
     }
   }
 
-  // 十字棋盘（正方形），内放中心格、连线层与槽位格
+  // 十字棋盘（正方形），内放中心小块、连线层与槽位格
   const board = document.createElement("div");
   board.className = "play-board";
-  container.appendChild(board);
+  mapEl.appendChild(board);
 
+  // 中心小块：只含地块名称，无说明文本
   const center = document.createElement("div");
-  center.className = "play-cell play-center";
-  const cName = document.createElement("div");
-  cName.className = "play-loc-name";
-  cName.textContent = loc.name;
-  const cDesc = document.createElement("div");
-  cDesc.className = "play-loc-desc";
-  cDesc.textContent = loc.description;
-  const cId = document.createElement("div");
-  cId.className = "play-pid";
-  cId.textContent = `玩家 ${playerId}`;
-  center.appendChild(cName);
-  center.appendChild(cDesc);
-  center.appendChild(cId);
+  center.className = "play-center";
+  center.textContent = loc.name;
   board.appendChild(center);
 
   // 连线层：中心到每个占位槽位一条无箭头线段
@@ -111,11 +106,17 @@ export function renderPlay(world, playerId, moveTo) {
     board.appendChild(cell);
   }
 
+  // 平级信息 div：当前地块说明文本（实体系统后续版本再接入）
+  if (loc.description) {
+    infoEl.textContent = loc.description;
+    infoEl.hidden = false;
+  }
+
   if (exits.length === 0) {
     const hint = document.createElement("p");
     hint.className = "hint";
     hint.textContent = "这里没有任何出口，你似乎被困住了。";
-    container.appendChild(hint);
+    mapEl.appendChild(hint);
   }
 
   // 违规地图折叠兜底：展开全部出口列表（保留 exit_id），可收回
@@ -157,8 +158,8 @@ export function renderPlay(world, playerId, moveTo) {
       });
       list.appendChild(close);
       btn.hidden = true;
-      container.appendChild(list);
+      mapEl.appendChild(list);
     });
-    container.appendChild(btn);
+    mapEl.appendChild(btn);
   }
 }
