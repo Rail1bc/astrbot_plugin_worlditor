@@ -544,19 +544,22 @@ function centerContent() {
   graphEl.scrollTop = Math.max(0, PAD * zoom + (contentH * zoom - graphEl.clientHeight) / 2);
 }
 
-// 画布尺寸 = 内容 + 四周固定留白，按 zoom 设置布局尺寸与缩放变换
+// 画布尺寸 = 内容 + 四周固定留白（未缩放），视觉缩放全部由 transform: scale(zoom) 完成；
+// 布局尺寸不能乘 zoom，否则与 transform 叠加造成双重缩放，滚动范围与网格线都会失真。
 function applyCanvas() {
   if (!canvasEl) {
     return;
   }
   const baseW = contentW + 2 * PAD;
   const baseH = contentH + 2 * PAD;
-  canvasEl.style.width = `${baseW * zoom}px`;
-  canvasEl.style.height = `${baseH * zoom}px`;
+  canvasEl.style.width = `${baseW}px`;
+  canvasEl.style.height = `${baseH}px`;
   canvasEl.style.transform = `scale(${zoom})`;
   gridEl.style.width = `${baseW}px`;
   gridEl.style.height = `${baseH}px`;
-  gridEl.style.backgroundSize = `${PITCH * zoom}px ${PITCH * zoom}px`;
+  gridEl.style.backgroundSize = `${PITCH}px ${PITCH}px`;
+  // 网格周期从内容原点（PAD）起算，与地块/连接轨道对齐
+  gridEl.style.backgroundPosition = `${PAD}px ${PAD}px`;
 }
 
 // 视口与内容无交集 → 回到内容：保证已有地块总在可视范围内（修复 hidden 状态或

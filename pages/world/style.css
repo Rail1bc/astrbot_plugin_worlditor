@@ -316,10 +316,12 @@ body {
   display: flex;
 }
 
-/* 无限画布：绝对定位像素渲染（edit-view.js），外层 #graph 滚动平移、Ctrl/滚轮缩放。
+/* 可滚动画布：绝对定位像素渲染（edit-view.js），外层 #graph 滚动平移、Ctrl/滚轮缩放。
    轨道尺寸（CELL / CONN / GAP / PITCH）与 edit-view.js 常量一致。 */
 .world-canvas {
-  position: relative;
+  position: absolute;
+  left: 0;
+  top: 0;
   transform-origin: 0 0;
 }
 
@@ -345,6 +347,7 @@ body {
 
 /* 地块格：只显示名字与 id（+ 出生点徽标） */
 .loc-cell {
+  position: absolute;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -411,7 +414,7 @@ body {
 
 /* 连接块：长方形（尺寸由轨道决定），内部画方向线条；空块 = 不连接 */
 .conn-block {
-  position: relative;
+  position: absolute;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -478,6 +481,7 @@ body {
 
 /* 占位小格（偶数-偶数轨道）：无意义，纯排版 */
 .ph-cell {
+  position: absolute;
   border: 1px dashed var(--border);
   border-radius: 4px;
   opacity: 0.35;
