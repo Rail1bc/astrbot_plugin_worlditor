@@ -1,76 +1,46 @@
-// edit-forms.js — 地块 / 出口的创建与编辑表单（自绘 modal 内）
+// edit-forms.js — 右侧详情栏内容构建（查看模式只读 / 编辑模式表单）
+// 编辑模式：点击空地块 → 新建地块；点击地块 → 详情栏含「创建连接」（方向 + 目的地
+// 可自选，目的地非相邻时该出口为特殊连接，以虚线强调条显示在出发方向连接块内）；
+// 点击连接块 → 查看并编辑块内出口、可补建连接（方向固定为该块走向）。
 // 上帝视角：地块永远真名；出口只有「隐藏目的地」开关与方向槽位，无 ??? 概念。
 
 import {
   apiPost,
-  cellKey,
-  computePositions,
   confirmModal,
+  DIR_LABELS,
   DIR_OFFSETS,
-  firstFreeCell,
-  hideModal,
-  OPPOSITE_DIR,
+  DIRECTIONS,
   openModal,
   state,
 } from "./shared.js";
 
-const DIRECTIONS = [
-  ["up", "上"],
-  ["right", "右"],
-  ["down", "下"],
-  ["left", "左"],
-];
-
-// ---------- 出口方向自动推荐 ----------
-// 新建出口的方向语义（编辑表格的相邻约束）：
-// ① 反向边存在（to→from）→ 推荐其反方向（保证 A右是B ⇔ B左是A）
-// ② 否则目标主位与出发地块相邻 → 按相对位置推导方向
-// ③ 否则 → 出发地块首个空闲方向（非相邻连接则表格生成分身）
-// ①②结果与同 from 其它出边方向冲突时回退 ③，避免槽位重叠。
-
-function usedDirections(fromId, exceptId = null) {
-  const used = new Set();
-  for (const e of state.world?.exits || []) {
-    if (e.from_id === fromId && e.id !== exceptId) {
-      used.add(e.direction);
-    }
-  }
-  return used;
+// ---------- 基础元素 ----------
+function hintEl(text) {
+  const p = document.createElement("p");
+  p.className = "hint";
+  p.textContent = text;
+  return p;
 }
 
-function pickFreeDirection(fromId, exceptId = null) {
-  const used = usedDirections(fromId, exceptId);
-  for (const [dir] of DIRECTIONS) {
-    if (!used.has(dir)) {
-      return dir;
-    }
-  }
-  return "up";
+function sectionTitle(text) {
+  const el = document.createElement("div");
+  el.className = "detail-sub";
+  el.textContent = text;
+  return el;
 }
 
-function recommendedDirection(fromId, toId, exceptId = null) {
-  const world = state.world;
-  const exits = (world && world.exits) || [];
-  const reverse = exits.find((e) => e.from_id === toId && e.to_id === fromId);
-  if (reverse) {
-    const dir = OPPOSITE_DIR[reverse.direction] || "up";
-    return usedDirections(fromId, exceptId).has(dir)
-      ? pickFreeDirection(fromId, exceptId)
-      : dir;
-  }
-  const pos = computePositions((world && world.locations) || []);
-  const from = pos.get(fromId);
-  const target = pos.get(toId);
-  if (from && target) {
-    for (const [dir, [dc, dr]] of Object.entries(DIR_OFFSETS)) {
-      if (target[0] === from[0] + dc && target[1] === from[1] + dr) {
-        return usedDirections(fromId, exceptId).has(dir)
-          ? pickFreeDirection(fromId, exceptId)
-          : dir;
-      }
-    }
-  }
-  return pickFreeDirection(fromId, exceptId);
+function kv(label, value) {
+  const row = document.createElement("div");
+  row.className = "kv";
+  const k = document.createElement("span");
+  k.className = "kv-key";
+  k.textContent = label;
+  const v = document.createElement("span");
+  v.className = "kv-value";
+  v.textContent = value;
+  row.appendChild(k);
+  row.appendChild(v);
+  return row;
 }
 
 function field(labelText, input) {
@@ -123,11 +93,19 @@ function selectInput(options, selected = "") {
   return input;
 }
 
-function formMsg(form) {
+function checkboxInput(checked = false) {
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.className = "form-check";
+  input.checked = checked;
+  return input;
+}
+
+function formMsg(container) {
   const msg = document.createElement("div");
   msg.className = "form-msg";
   msg.hidden = true;
-  form.appendChild(msg);
+  container.appendChild(msg);
   return {
     show(text) {
       msg.textContent = text;
@@ -136,97 +114,155 @@ function formMsg(form) {
   };
 }
 
-function currentLayoutValue(loc) {
-  if (loc && loc.layout && typeof loc.layout.x === "number") {
-    return [String(loc.layout.x), String(loc.layout.y)];
-  }
-  return ["", ""];
+function locName(byId, id) {
+  const l = byId.get(id);
+  return l ? l.name : id;
 }
 
-// 新建地块默认落位：优先最近点选地块（lastNodeId）的邻格，否则环形扫描空闲格
-function defaultCellForNewLocation() {
-  const locations = (state.world && state.world.locations) || [];
-  const pos = computePositions(locations);
-  const occupied = new Set([...pos.values()].map(([c, r]) => cellKey(c, r)));
-  const prefers = [];
-  const [lc, lr] = pos.get(state.lastNodeId) || [];
-  if (Number.isFinite(lc)) {
-    for (const [dc, dr] of Object.values(DIR_OFFSETS)) {
-      prefers.push([lc + dc, lr + dr]);
+function layoutText(loc) {
+  const layout = loc.layout || {};
+  if (Number.isFinite(layout.x) && Number.isFinite(layout.y)) {
+    return `列 ${layout.x}，行 ${layout.y}`;
+  }
+  return "（未设置）";
+}
+
+function uniqueExitId(base) {
+  const exits = state.world?.exits || [];
+  if (!exits.some((e) => e.id === base)) {
+    return base;
+  }
+  let i = 2;
+  while (exits.some((e) => e.id === `${base}_${i}`)) {
+    i++;
+  }
+  return `${base}_${i}`;
+}
+
+// 从 fromId 出发，同 from 出边尚未占用的首个方向
+function firstFreeDirection(fromId) {
+  const used = new Set();
+  for (const e of state.world?.exits || []) {
+    if (e.from_id === fromId) {
+      used.add(e.direction);
     }
   }
-  const [c, r] = firstFreeCell(occupied, prefers);
-  return [String(c), String(r)];
+  for (const d of DIRECTIONS) {
+    if (!used.has(d)) {
+      return d;
+    }
+  }
+  return "up";
 }
 
-// ---------- 地块表单 ----------
-export function locationForm(loc, onSubmit) {
-  const form = document.createElement("form");
-  form.className = "form";
+// ---------- 出口行（可点击跳转） ----------
+function exitItemEl(e, byId, bus) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "exit-item";
+  const text = document.createElement("span");
+  text.className = "exit-item-text";
+  text.textContent = `${locName(byId, e.from_id)} → ${locName(byId, e.to_id)} · ${e.label}`;
+  const dir = document.createElement("span");
+  dir.className = "exit-item-dir";
+  dir.textContent = DIR_LABELS[e.direction] || e.direction;
+  btn.appendChild(text);
+  btn.appendChild(dir);
+  btn.addEventListener("click", () => bus.onSelectExit(e.id));
+  return btn;
+}
 
-  const idInput = textInput(loc ? loc.id : "", "唯一标识，如 town_plaza");
-  if (loc) {
-    idInput.disabled = true;
+function exitListEl(exits, byId, bus) {
+  const list = document.createElement("div");
+  list.className = "detail-stack";
+  if (exits.length === 0) {
+    list.appendChild(hintEl("这里没有任何出口。"));
   }
-  const nameInput = textInput(loc ? loc.name : "", "地块名称");
-  const descInput = textareaInput(loc ? loc.description : "");
-  // 新建：默认落在空闲格（优先最近点选地块的邻格）；编辑：取当前 layout
-  const [curCol, curRow] = loc
-    ? currentLayoutValue(loc)
-    : defaultCellForNewLocation();
-  const colInput = numberInput(curCol, 1);
-  const rowInput = numberInput(curRow, 1);
+  for (const e of exits) {
+    list.appendChild(exitItemEl(e, byId, bus));
+  }
+  return list;
+}
 
-  form.appendChild(field("id", idInput));
+// ---------- 地块（查看 / 编辑） ----------
+export function locationViewEl(loc, exitsFrom, byId, bus) {
+  const box = document.createElement("div");
+  box.className = "detail-stack";
+  box.appendChild(kv("名称", loc.name));
+  box.appendChild(kv("id", loc.id));
+  box.appendChild(kv("位置", layoutText(loc)));
+  if (loc.description) {
+    box.appendChild(kv("描述", loc.description));
+  }
+  box.appendChild(sectionTitle("出口"));
+  box.appendChild(exitListEl(exitsFrom, byId, bus));
+  return box;
+}
+
+export function locationEditEl(loc, exitsFrom, byId, bus, pos) {
+  const box = document.createElement("div");
+  box.className = "detail-stack";
+
+  // ① 创建连接（点击地块的主操作）：方向 + 目的地可自选
+  box.appendChild(sectionTitle("创建连接"));
+  box.appendChild(exitCreateEl(loc.id, byId, bus, null, pos));
+
+  // ② 地块信息
+  box.appendChild(sectionTitle("地块信息"));
+  const form = document.createElement("div");
+  form.className = "form";
+  const nameInput = textInput(loc.name, "地块名称");
+  const descInput = textareaInput(loc.description);
+  const layout = loc.layout || {};
+  const colInput = numberInput(Number.isFinite(layout.x) ? layout.x : "", 1);
+  const rowInput = numberInput(Number.isFinite(layout.y) ? layout.y : "", 1);
   form.appendChild(field("名称", nameInput));
   form.appendChild(field("描述", descInput));
-  form.appendChild(field("列（col，可选）", colInput));
-  form.appendChild(field("行（row，可选）", rowInput));
+  form.appendChild(field("列（col）", colInput));
+  form.appendChild(field("行（row）", rowInput));
   const msg = formMsg(form);
-
-  const actions = [];
-  if (loc) {
-    actions.push({
-      label: "删除",
-      onClick: () => {
-        confirmModal(
-          `删除地块「${loc.name}」？`,
-          "将级联删除所有以它为起点或终点的出口。",
-          async () => {
-            try {
-              await apiPost("world/location/delete", { id: loc.id });
-              hideModal();
-              onSubmit();
-            } catch (error) {
-              // 确认弹窗已替换 modal 内容，失败改弹错误提示
-              openModal("删除失败", error?.message || String(error));
-            }
-          },
-          "删除"
-        );
+  const actions = document.createElement("div");
+  actions.className = "form-actions";
+  const delBtn = document.createElement("button");
+  delBtn.type = "button";
+  delBtn.className = "btn";
+  delBtn.textContent = "删除地块";
+  delBtn.addEventListener("click", () => {
+    confirmModal(
+      `删除地块「${loc.name}」？`,
+      "将级联删除所有以它为起点或终点的出口。",
+      async () => {
+        try {
+          await apiPost("world/location/delete", { id: loc.id });
+          state.selection = null;
+          bus.onSubmit();
+        } catch (error) {
+          openErrorModal("删除失败", error);
+        }
       },
-    });
-  }
-  actions.push({
-    label: loc ? "保存" : "创建",
-    primary: true,
-    onClick: () =>
-      void submitLocation(loc, {
-        idInput,
-        nameInput,
-        descInput,
-        colInput,
-        rowInput,
-        msg,
-        onSubmit,
-      }),
+      "删除"
+    );
   });
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "btn btn-primary";
+  saveBtn.textContent = "保存";
+  saveBtn.addEventListener("click", () =>
+    void submitLocationUpdate(loc, { nameInput, descInput, colInput, rowInput, msg, bus })
+  );
+  actions.appendChild(delBtn);
+  actions.appendChild(saveBtn);
+  form.appendChild(actions);
+  box.appendChild(form);
 
-  return { el: form, actions };
+  // ③ 出口列表
+  box.appendChild(sectionTitle("出口"));
+  box.appendChild(exitListEl(exitsFrom, byId, bus));
+  return box;
 }
 
-async function submitLocation(loc, f) {
-  const { idInput, nameInput, descInput, colInput, rowInput, msg, onSubmit } = f;
+async function submitLocationUpdate(loc, f) {
+  const { nameInput, descInput, colInput, rowInput, msg, bus } = f;
   const name = nameInput.value.trim();
   if (!name) {
     msg.show("地块名称不能为空");
@@ -234,175 +270,324 @@ async function submitLocation(loc, f) {
   }
   const col = colInput.value.trim();
   const row = rowInput.value.trim();
-  const body = loc
-    ? { id: loc.id, name, description: descInput.value }
-    : { id: idInput.value.trim(), name, description: descInput.value };
-  if (!loc && !body.id) {
-    msg.show("id 不能为空");
-    return;
-  }
+  const body = { id: loc.id, name, description: descInput.value };
   if ((col === "") !== (row === "")) {
     msg.show("列与行必须同时提供，或同时留空");
     return;
   }
   if (col !== "") {
     body.layout = { x: Number(col), y: Number(row) };
-  } else if (loc) {
+  } else {
     body.layout = null; // 显式清空坐标
   }
   try {
-    await apiPost(loc ? "world/location/update" : "world/location/create", body);
-    hideModal();
-    onSubmit();
+    await apiPost("world/location/update", body);
+    bus.onSubmit();
   } catch (error) {
     msg.show(error?.message || String(error));
   }
 }
 
-// ---------- 出口表单 ----------
-export function exitForm(exit, onSubmit) {
-  const form = document.createElement("form");
+// ---------- 空地块（新建地块） ----------
+export function slotCreateEl(locations, col, row, byId, bus) {
+  const form = document.createElement("div");
   form.className = "form";
-
-  const locations = (state.world && state.world.locations) || [];
-  const options = locations.map((l) => [l.id, `${l.name}（${l.id}）`]);
-
-  const idInput = textInput(exit ? exit.id : "", "唯一标识，如 town_plaza_cafe");
-  if (exit) {
-    idInput.disabled = true;
-  }
-  const defaultFrom = exit
-    ? exit.from_id
-    : state.lastNodeId && locations.some((l) => l.id === state.lastNodeId)
-      ? state.lastNodeId
-      : locations[0] ? locations[0].id : "";
-  const fromInput = selectInput(options, defaultFrom);
-  if (exit) {
-    fromInput.disabled = true;
-  }
-  const toInput = selectInput(options, exit ? exit.to_id : "");
-  const labelInput = textInput(exit ? exit.label : "", "出口标签，如「沿着东街走向咖啡店」");
-
-  const revealCheck = document.createElement("input");
-  revealCheck.type = "checkbox";
-  revealCheck.className = "form-check";
-  revealCheck.checked = exit ? exit.reveal_target === false : false;
-
-  const directionWrap = document.createElement("div");
-  directionWrap.className = "form-radio-group";
-  const radios = [];
-  for (const [value, text] of DIRECTIONS) {
-    const label = document.createElement("label");
-    label.className = "form-radio";
-    const radio = document.createElement("input");
-    radio.type = "radio";
-    radio.name = "direction";
-    radio.value = value;
-    if (exit) {
-      radio.checked = exit.direction === value;
-    }
-    label.appendChild(radio);
-    label.appendChild(document.createTextNode(text));
-    directionWrap.appendChild(label);
-    radios.push(radio);
-  }
-  const applyRecommendedDirection = () => {
-    const dir = recommendedDirection(fromInput.value, toInput.value, exit?.id ?? null);
-    const radio = radios.find((r) => r.value === dir);
-    if (radio) {
-      radio.checked = true;
-    }
-  };
-  if (!exit) {
-    // 新建：初始按反向边/相邻关系自动推荐；切换 from/to 时重新推荐
-    applyRecommendedDirection();
-    fromInput.addEventListener("change", applyRecommendedDirection);
-    toInput.addEventListener("change", applyRecommendedDirection);
-  } else {
-    // 编辑：保留原方向；仅当变更目标导致方向与同 from 其它出边冲突时重新推荐
-    toInput.addEventListener("change", () => {
-      const checked = radios.find((r) => r.checked);
-      if (checked && usedDirections(exit.from_id, exit.id).has(checked.value)) {
-        applyRecommendedDirection();
-      }
-    });
-  }
-
+  form.appendChild(kv("位置", `列 ${col}，行 ${row}（已锁定）`));
+  const idInput = textInput(`loc_${col}_${row}`, "唯一标识，如 town_plaza");
+  const nameInput = textInput("", "地块名称");
+  const descInput = textareaInput("");
   form.appendChild(field("id", idInput));
-  form.appendChild(field("出发地块", fromInput));
-  form.appendChild(field("目标地块", toInput));
-  form.appendChild(field("出口标签", labelInput));
-  form.appendChild(field("隐藏目的地", revealCheck));
-  form.appendChild(field("方向", directionWrap));
+  form.appendChild(field("名称", nameInput));
+  form.appendChild(field("描述", descInput));
   const msg = formMsg(form);
-
-  const actions = [];
-  if (exit) {
-    actions.push({
-      label: "删除",
-      onClick: () => {
-        confirmModal(
-          `删除出口「${exit.label}」？`,
-          "删除后该出口将无法再通行。",
-          async () => {
-            try {
-              await apiPost("world/exit/delete", { id: exit.id });
-              hideModal();
-              onSubmit();
-            } catch (error) {
-              // 确认弹窗已替换 modal 内容，失败改弹错误提示
-              openModal("删除失败", error?.message || String(error));
-            }
-          },
-          "删除"
-        );
-      },
-    });
-  }
-  actions.push({
-    label: exit ? "保存" : "创建",
-    primary: true,
-    onClick: () =>
-      void submitExit(exit, { idInput, fromInput, toInput, labelInput, revealCheck, directionWrap, msg, onSubmit }),
-  });
-
-  return { el: form, actions };
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn btn-primary";
+  btn.textContent = "创建地块";
+  btn.addEventListener("click", () =>
+    void submitSlotCreate({ idInput, nameInput, descInput, col, row, msg, bus })
+  );
+  form.appendChild(btn);
+  return form;
 }
 
-async function submitExit(exit, f) {
-  const { idInput, fromInput, toInput, labelInput, revealCheck, directionWrap, msg, onSubmit } = f;
+async function submitSlotCreate(f) {
+  const { idInput, nameInput, descInput, col, row, msg, bus } = f;
+  const id = idInput.value.trim();
+  const name = nameInput.value.trim();
+  if (!id) {
+    msg.show("id 不能为空");
+    return;
+  }
+  if (!name) {
+    msg.show("地块名称不能为空");
+    return;
+  }
+  try {
+    await apiPost("world/location/create", {
+      id,
+      name,
+      description: descInput.value,
+      layout: { x: col, y: row },
+    });
+    bus.onCreatedLocation(id);
+    bus.onSubmit();
+  } catch (error) {
+    msg.show(error?.message || String(error));
+  }
+}
+
+// ---------- 出口（查看 / 编辑） ----------
+export function exitViewEl(exit, byId, bus) {
+  const box = document.createElement("div");
+  box.className = "detail-stack";
+  box.appendChild(kv("方向", DIR_LABELS[exit.direction] || exit.direction));
+  box.appendChild(kv("出发", locName(byId, exit.from_id)));
+  box.appendChild(kv("目标", locName(byId, exit.to_id)));
+  box.appendChild(kv("出口标签", exit.label));
+  box.appendChild(kv("隐藏目的地", exit.reveal_target === false ? "是" : "否"));
+  if (exit.reveal_target === false) {
+    box.appendChild(hintEl("该出口隐藏目的地，玩家视图显示「???」。"));
+  }
+  return box;
+}
+
+export function exitEditEl(exit, byId, bus) {
+  const form = document.createElement("div");
+  form.className = "form";
+  form.appendChild(kv("id", exit.id));
+  form.appendChild(kv("出发", locName(byId, exit.from_id)));
+  const toInput = selectInput(
+    [...byId.values()].map((l) => [l.id, l.name]),
+    exit.to_id
+  );
+  const labelInput = textInput(exit.label, "出口标签");
+  const dirInput = selectInput(DIRECTIONS.map((d) => [d, DIR_LABELS[d]]), exit.direction);
+  const revealInput = checkboxInput(exit.reveal_target === false);
+  form.appendChild(field("目标地块", toInput));
+  form.appendChild(field("出口标签", labelInput));
+  form.appendChild(field("方向", dirInput));
+  form.appendChild(field("隐藏目的地", revealInput));
+  const msg = formMsg(form);
+  const actions = document.createElement("div");
+  actions.className = "form-actions";
+  const delBtn = document.createElement("button");
+  delBtn.type = "button";
+  delBtn.className = "btn";
+  delBtn.textContent = "删除出口";
+  delBtn.addEventListener("click", () => {
+    confirmModal(
+      `删除出口「${exit.label}」？`,
+      "删除后该出口将无法再通行。",
+      async () => {
+        try {
+          await apiPost("world/exit/delete", { id: exit.id });
+          state.selection = null;
+          bus.onSubmit();
+        } catch (error) {
+          openErrorModal("删除失败", error);
+        }
+      },
+      "删除"
+    );
+  });
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "btn btn-primary";
+  saveBtn.textContent = "保存";
+  saveBtn.addEventListener("click", () =>
+    void submitExitUpdate(exit, { toInput, labelInput, dirInput, revealInput, msg, bus })
+  );
+  actions.appendChild(delBtn);
+  actions.appendChild(saveBtn);
+  form.appendChild(actions);
+  return form;
+}
+
+async function submitExitUpdate(exit, f) {
+  const { toInput, labelInput, dirInput, revealInput, msg, bus } = f;
   const label = labelInput.value.trim();
   if (!label) {
     msg.show("出口标签不能为空");
     return;
   }
-  const direction = directionWrap.querySelector('input[name="direction"]:checked');
-  const body = exit
-    ? {
-        id: exit.id,
-        to_id: toInput.value,
-        label,
-        reveal_target: !revealCheck.checked,
-        direction: direction ? direction.value : "up",
-      }
-    : {
-        id: idInput.value.trim(),
-        from_id: fromInput.value,
-        to_id: toInput.value,
-        label,
-        reveal_target: !revealCheck.checked,
-        direction: direction ? direction.value : "up",
-      };
-  if (!body.id) {
-    msg.show("id 不能为空");
-    return;
-  }
+  const body = {
+    id: exit.id,
+    to_id: toInput.value,
+    label,
+    direction: dirInput.value,
+    reveal_target: !revealInput.checked,
+  };
   try {
-    await apiPost(exit ? "world/exit/update" : "world/exit/create", body);
-    hideModal();
-    onSubmit();
+    await apiPost("world/exit/update", body);
+    bus.onSubmit();
   } catch (error) {
     msg.show(error?.message || String(error));
   }
 }
 
+// ---------- 创建连接 ----------
+// fromId 固定；fixedDir 为 null 时方向可四选（默认首个空闲方向），否则锁定。
+// 目的地可自选：与 from 相邻 → 普通连接；否则特殊连接（虚线显示在出发方向连接块内）。
+export function exitCreateEl(fromId, byId, bus, fixedDir, pos) {
+  const form = document.createElement("div");
+  form.className = "form";
+  form.appendChild(kv("出发", locName(byId, fromId)));
+
+  const dirInput = selectInput(
+    DIRECTIONS.map((d) => [d, DIR_LABELS[d]]),
+    fixedDir || firstFreeDirection(fromId)
+  );
+  if (fixedDir) {
+    dirInput.disabled = true;
+  }
+  const toInput = selectInput([...byId.values()].map((l) => [l.id, l.name]), "");
+  const labelInput = textInput("", "出口标签，如「沿着东街走向咖啡店」");
+  const revealInput = checkboxInput(false);
+  const msg = formMsg(form);
+
+  // 方向指向相邻地块时自动选中该目标（可再手动改成任意目标 → 特殊连接）
+  const pickAdjacent = () => {
+    const fromPos = pos.get(fromId);
+    if (!fromPos) {
+      return;
+    }
+    const [dc, dr] = DIR_OFFSETS[dirInput.value] || DIR_OFFSETS.up;
+    const tc = fromPos[0] + dc;
+    const tr = fromPos[1] + dr;
+    for (const [id, cell] of pos) {
+      if (id !== fromId && cell[0] === tc && cell[1] === tr) {
+        toInput.value = id;
+        return;
+      }
+    }
+  };
+  if (!fixedDir) {
+    dirInput.addEventListener("change", pickAdjacent);
+  }
+  pickAdjacent();
+
+  form.appendChild(field("方向", dirInput));
+  form.appendChild(field("目标地块（可自选）", toInput));
+  form.appendChild(field("出口标签", labelInput));
+  form.appendChild(field("隐藏目的地", revealInput));
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn btn-primary";
+  btn.textContent = "创建连接";
+  btn.addEventListener("click", () =>
+    void submitExitCreate(fromId, { dirInput, toInput, labelInput, revealInput, msg, bus })
+  );
+  form.appendChild(btn);
+  return form;
+}
+
+async function submitExitCreate(fromId, f) {
+  const { dirInput, toInput, labelInput, revealInput, msg, bus } = f;
+  const label = labelInput.value.trim();
+  if (!label) {
+    msg.show("出口标签不能为空");
+    return;
+  }
+  const toId = toInput.value;
+  if (!toId) {
+    msg.show("请选择目标地块");
+    return;
+  }
+  const direction = dirInput.value;
+  const body = {
+    id: uniqueExitId(`${fromId}_${direction}_${toId}`),
+    from_id: fromId,
+    to_id: toId,
+    label,
+    reveal_target: !revealInput.checked,
+    direction,
+  };
+  try {
+    await apiPost("world/exit/create", body);
+    bus.onSubmit();
+  } catch (error) {
+    msg.show(error?.message || String(error));
+  }
+}
+
+// ---------- 连接块（查看 / 编辑） ----------
+function describeBlock(info, byId) {
+  const names = [];
+  if (info.kind === "h") {
+    if (info.left) names.push(locName(byId, info.left.id));
+    if (info.right) names.push(locName(byId, info.right.id));
+    return `${names.join(" 与 ")} 之间（横向）`;
+  }
+  if (info.top) names.push(locName(byId, info.top.id));
+  if (info.bottom) names.push(locName(byId, info.bottom.id));
+  return `${names.join(" 与 ")} 之间（纵向）`;
+}
+
+export function blockViewEl(info, byId, bus) {
+  const box = document.createElement("div");
+  box.className = "detail-stack";
+  box.appendChild(kv("方位", describeBlock(info, byId)));
+  if (info.exits.length === 0) {
+    box.appendChild(hintEl("该方向没有任何连接。"));
+  }
+  for (const e of info.exits) {
+    box.appendChild(exitItemEl(e, byId, bus));
+  }
+  return box;
+}
+
+export function blockEditEl(info, byId, bus, pos) {
+  const box = document.createElement("div");
+  box.className = "detail-stack";
+  box.appendChild(kv("方位", describeBlock(info, byId)));
+  box.appendChild(sectionTitle("出口"));
+  if (info.exits.length === 0) {
+    box.appendChild(hintEl("该方向没有任何连接。"));
+  }
+  for (const e of info.exits) {
+    box.appendChild(exitItemEl(e, byId, bus));
+  }
+
+  // 创建连接：从块的一侧出发，方向固定为该块的走向（目的地可自选 → 可造特殊连接）
+  const candidates = [];
+  if (info.kind === "h") {
+    if (info.left) candidates.push([info.left.id, "right"]);
+    if (info.right) candidates.push([info.right.id, "left"]);
+  } else {
+    if (info.top) candidates.push([info.top.id, "down"]);
+    if (info.bottom) candidates.push([info.bottom.id, "up"]);
+  }
+  if (candidates.length === 0) {
+    return box;
+  }
+  box.appendChild(sectionTitle("创建连接"));
+  if (candidates.length === 1) {
+    const [fromId, dir] = candidates[0];
+    box.appendChild(exitCreateEl(fromId, byId, bus, dir, pos));
+    return box;
+  }
+  const dirMap = new Map(candidates);
+  const fromInput = selectInput(
+    candidates.map(([id]) => [id, locName(byId, id)]),
+    candidates[0][0]
+  );
+  const createWrap = document.createElement("div");
+  const renderCreate = () => {
+    createWrap.textContent = "";
+    createWrap.appendChild(exitCreateEl(fromInput.value, byId, bus, dirMap.get(fromInput.value), pos));
+  };
+  fromInput.addEventListener("change", renderCreate);
+  renderCreate();
+  box.appendChild(field("从哪侧出发", fromInput));
+  box.appendChild(createWrap);
+  return box;
+}
+
+function openErrorModal(title, error) {
+  // 轻量错误弹窗（避免与 confirmModal 相互覆盖的复杂度）
+  const el = document.createElement("div");
+  el.className = "detail-stack";
+  el.appendChild(hintEl(error?.message || String(error)));
+  openModal(title, el);
+}

@@ -9,21 +9,23 @@ export const state = {
   playerId: null,
   world: null, // { locations, exits, player, agent, spawn }
   mode: "edit", // "edit" | "play"
-  lastNodeId: null, // 编辑视图最近点选的地块，新建出口时作为默认 from_id
-  collapsedExits: new Set(), // 编辑视图已收起的出口（分身折叠进出发地块格）
+  editMode: "edit", // 编辑视图子模式："view"（只读）| "edit"（表单 + 创建）
+  selection: null, // 详情栏选中项：{kind:"location"|"slot"|"block"|"exit", ...}
+  detailOpen: true, // 详情栏是否展开
 };
 
-// ---------- 网格布局（编辑视图表格） ----------
-// 地块主位 = layout 整数坐标（col=x、row=y）；出口方向决定「目标相邻格」；
-// 目标主位不在该格时，该格显示目标的地块分身（可收起）。
+// ---------- 网格坐标（编辑视图交替网格表格） ----------
+// 表格轨道：奇数轨 = 地块（正方形），偶数轨 = 连接块（长方形）/ 占位小格；
+// 地块主位 = layout 整数坐标（col=x、row=y），表位 = 2*(坐标-min)+1。
 
+export const DIRECTIONS = ["up", "right", "down", "left"];
+export const DIR_LABELS = { up: "上", right: "右", down: "下", left: "左" };
 export const DIR_OFFSETS = {
   up: [0, -1],
   right: [1, 0],
   down: [0, 1],
   left: [-1, 0],
 };
-
 export const OPPOSITE_DIR = {
   up: "down",
   right: "left",
@@ -54,27 +56,7 @@ export function computePositions(locations) {
   return pos;
 }
 
-// 分身列表：每条出口的要求格 = from + direction 偏移；目标主位不在该格 → 分身
-export function computeAvatars(world, pos) {
-  const avatars = [];
-  for (const e of world?.exits || []) {
-    const from = pos.get(e.from_id);
-    const target = pos.get(e.to_id);
-    if (!from || !target) {
-      continue;
-    }
-    const [dc, dr] = DIR_OFFSETS[e.direction] || DIR_OFFSETS.up;
-    const col = from[0] + dc;
-    const row = from[1] + dr;
-    const adjacent = target[0] === col && target[1] === row;
-    if (!adjacent) {
-      avatars.push({ exit: e, col, row, targetId: e.to_id });
-    }
-  }
-  return avatars;
-}
-
-// 首个空闲格：优先候选列表（如 lastNodeId 的邻格），否则从 (0,0) 向外环形扫描
+// 首个空闲格：优先候选列表，否则从 (0,0) 向外环形扫描
 export function firstFreeCell(occupied, prefers = []) {
   for (const [c, r] of prefers) {
     if (!occupied.has(cellKey(c, r))) {

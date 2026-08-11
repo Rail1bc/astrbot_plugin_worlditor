@@ -1,36 +1,124 @@
-// edit-view.js — 编辑模式：网格表格（上帝视角）+ 可视化编辑交互
-// 表格：每个地块一个格子（layout 整数坐标=列/行）；连接必须相邻——出口方向决定
-// 目标相邻格；目标主位不在该格时该格显示目标「分身」（虚线框，可收起/展开）；
-// 间隙内画方向标签（↑↓←→ + 出口 label，隐藏目标仍显示真名——上帝视角）；
-// 出生点徽标（agent / 玩家注册起始）；重名地块悬浮全体高亮。
-// 点击主格 → 地块表单；点击分身 → 出口表单。
+// edit-view.js — 编辑模式：交替网格表格（地块/连接块/占位小格）+ 右侧详情栏
+// 表格轨道：奇数轨 = 地块（正方形），偶数轨 = 连接块（长方形）/ 占位小格。
+// 地块格只显示名字与 id（+ 出生点徽标）；连接块内画表示方向的线条（单向箭头 /
+// 双向双箭头 / 空块=不连接），不画方向文字；非相邻连接（目的地可自选）以虚线
+// 强调条显示在出发方向的连接块内（替代原「分身」概念，无展开/收起按钮）。
+// 点击空地块（编辑模式）→ 新建地块；点击地块 → 详情栏（含创建连接）；点击
+// 连接块 / 连接条 → 查看 / 编辑该出口。右侧详情栏可收起/展开。
+// 查看模式只读；编辑模式可增删改。
 
-import { $, openModal, state } from "./shared.js";
-import { exitForm, locationForm } from "./edit-forms.js";
+import { $, state, DIR_OFFSETS, computePositions, cellKey } from "./shared.js";
 import {
-  DIR_OFFSETS,
-  cellKey,
-  computeAvatars,
-  computePositions,
-} from "./shared.js";
+  locationViewEl,
+  locationEditEl,
+  slotCreateEl,
+  blockViewEl,
+  blockEditEl,
+  exitViewEl,
+  exitEditEl,
+} from "./edit-forms.js";
 
-const DIR_CHAR = { up: "↑", right: "→", down: "↓", left: "←" };
+const SVG_NS = "http://www.w3.org/2000/svg";
 
-const CELL_W = 170;
-const CELL_H = 104;
-const GAP = 34;
-const PAD = 20;
+// 尺寸常量（与 style.css 的轨道尺寸一致）
+const CELL = 88; // 地块轨道（正方形）
+const CONN = 64; // 连接轨道（连接块 / 占位小格）
+const BAR = 48; // 连接条长度
+const BAR_H = 22; // 连接条高度（含箭头）
 
-let onMutate = null;
+let onMutate = null; // app 传入：mutation 后 re-fetch 世界并整体重绘
+let currentWorld = null;
+
+const spawnBadgeText = (spawn, id) => {
+  if (spawn.agent === id && spawn.player === id) return "出生点";
+  if (spawn.agent === id) return "Agent 出生点";
+  if (spawn.player === id) return "玩家出生点";
+  return "";
+};
 
 export function initEditView(options) {
   onMutate = options.onMutate;
-  $("#btn-new-location").addEventListener("click", () => openLocationForm(null));
-  $("#btn-new-exit").addEventListener("click", () => openExitForm(null));
-  $("#btn-toggle-avatars").addEventListener("click", toggleAllAvatars);
+  $("#edit-mode-view").addEventListener("click", () => setEditMode("view"));
+  $("#edit-mode-edit").addEventListener("click", () => setEditMode("edit"));
+  $("#btn-toggle-detail").addEventListener("click", toggleDetail);
+  $("#detail-close").addEventListener("click", toggleDetail);
+  setEditMode(state.editMode);
+}
+
+function setEditMode(mode) {
+  state.editMode = mode;
+  $("#edit-mode-view").classList.toggle("active", mode === "view");
+  $("#edit-mode-edit").classList.toggle("active", mode === "edit");
+  $("#edit-mode-view").setAttribute("aria-selected", mode === "view" ? "true" : "false");
+  $("#edit-mode-edit").setAttribute("aria-selected", mode === "edit" ? "true" : "false");
+  $("#view-edit").classList.toggle("mode-edit", mode === "edit");
+  const hint = $("#edit-hint");
+  if (hint) {
+    hint.textContent =
+      mode === "edit"
+        ? "编辑模式：点击空地块可新建地块；点击地块可创建连接（目的地可自选）；点击连接块或连接条可编辑。"
+        : "查看模式：只读浏览，点击地块 / 连接查看详情。";
+  }
+  renderEdit(currentWorld);
+}
+
+function toggleDetail() {
+  state.detailOpen = !state.detailOpen;
+  const btn = $("#btn-toggle-detail");
+  if (btn) {
+    btn.textContent = state.detailOpen ? "收起详情栏" : "展开详情栏";
+  }
+  renderEdit(currentWorld);
+}
+
+// 出口所在连接块的键：right→h:row:col（col 与 col+1 之间的横向间隙），
+// left→h:row:col-1，down→v:col:row，up→v:col:row-1。
+export function exitBlockKey(sc, sr, dir) {
+  switch (dir) {
+    case "right":
+      return `h:${sr}:${sc}`;
+    case "left":
+      return `h:${sr}:${sc - 1}`;
+    case "down":
+      return `v:${sc}:${sr}`;
+    default:
+      return `v:${sc}:${sr - 1}`;
+  }
+}
+
+// 解析连接块键 → 两侧地块 + 块内出口（导出供 edit-forms 的详情栏使用）
+export function blockInfo(world, key, pos, locAt) {
+  const [kind, a, b] = key.split(":");
+  let left = null;
+  let right = null;
+  let top = null;
+  let bottom = null;
+  if (kind === "h") {
+    const r = Number(a);
+    const c = Number(b);
+    left = locAt.get(cellKey(c, r)) || null;
+    right = locAt.get(cellKey(c + 1, r)) || null;
+  } else {
+    const c = Number(a);
+    const r = Number(b);
+    top = locAt.get(cellKey(c, r)) || null;
+    bottom = locAt.get(cellKey(c, r + 1)) || null;
+  }
+  const exits = [];
+  for (const e of world?.exits || []) {
+    const from = pos.get(e.from_id);
+    if (!from) {
+      continue;
+    }
+    if (exitBlockKey(from[0], from[1], e.direction) === key) {
+      exits.push(e);
+    }
+  }
+  return { key, kind, left, right, top, bottom, exits };
 }
 
 export function renderEdit(world) {
+  currentWorld = world;
   const container = $("#graph");
   const errorEl = $("#map-error");
   container.textContent = "";
@@ -39,288 +127,387 @@ export function renderEdit(world) {
   if (!world || !Array.isArray(world.locations) || world.locations.length === 0) {
     const p = document.createElement("p");
     p.className = "hint";
-    p.textContent = "世界为空，点「＋ 新建地块」开始。";
+    p.textContent = "世界为空。";
     container.appendChild(p);
+    renderPanel(world);
     return;
   }
 
   const pos = computePositions(world.locations);
-  const allAvatars = computeAvatars(world, pos);
-  const collapsed = state.collapsedExits;
-
-  // 非收起分身按格分组（一格可能叠多个分身）
-  const avatarByCell = new Map();
-  for (const a of allAvatars) {
-    if (collapsed.has(a.exit.id)) {
-      continue;
-    }
-    const k = cellKey(a.col, a.row);
-    if (!avatarByCell.has(k)) {
-      avatarByCell.set(k, []);
-    }
-    avatarByCell.get(k).push(a);
+  const locAt = new Map();
+  for (const l of world.locations) {
+    locAt.set(cellKey(pos.get(l.id)[0], pos.get(l.id)[1]), l);
   }
 
-  // 占用的格：主位 + 非收起分身（决定网格范围）
-  const occupiedCells = new Set();
-  for (const [, cell] of pos) {
-    occupiedCells.add(cellKey(cell[0], cell[1]));
-  }
-  for (const k of avatarByCell.keys()) {
-    occupiedCells.add(k);
-  }
-
+  // 地块边界
   let minCol = 0;
   let maxCol = 0;
   let minRow = 0;
   let maxRow = 0;
-  for (const k of occupiedCells) {
-    const [c, r] = k.split(",").map(Number);
-    minCol = Math.min(minCol, c);
-    maxCol = Math.max(maxCol, c);
-    minRow = Math.min(minRow, r);
-    maxRow = Math.max(maxRow, r);
+  let first = true;
+  for (const [, [c, r]] of pos) {
+    if (first) {
+      minCol = maxCol = c;
+      minRow = maxRow = r;
+      first = false;
+    } else {
+      minCol = Math.min(minCol, c);
+      maxCol = Math.max(maxCol, c);
+      minRow = Math.min(minRow, r);
+      maxRow = Math.max(maxRow, r);
+    }
   }
-  const nCols = maxCol - minCol + 1;
-  const nRows = maxRow - minRow + 1;
-
-  // 像素换算（含内边距；绝对定位元素相对 padding 盒）
-  const colCx = (gcol) => PAD + gcol * (CELL_W + GAP) + CELL_W / 2;
-  const rowCy = (grow) => PAD + grow * (CELL_H + GAP) + CELL_H / 2;
-  const gapX = (gcol) => PAD + (gcol + 1) * CELL_W + gcol * GAP + GAP / 2;
-  const gapY = (grow) => PAD + (grow + 1) * CELL_H + grow * GAP + GAP / 2;
-
-  const grid = document.createElement("div");
-  grid.className = "edit-grid";
-  grid.style.gridTemplateColumns = `repeat(${nCols}, ${CELL_W}px)`;
-  grid.style.gridTemplateRows = `repeat(${nRows}, ${CELL_H}px)`;
-  grid.style.width = `${nCols * CELL_W + (nCols - 1) * GAP + PAD * 2}px`;
-  grid.style.padding = `${PAD}px`;
-  container.appendChild(grid);
-
-  const cellEls = new Map(); // location_id -> 元素列表（同名联动高亮用）
-  const byId = new Map(world.locations.map((l) => [l.id, l]));
-  const spawn = world.spawn || {};
-
-  // ---------- 主地块格 ----------
-  for (const l of world.locations) {
-    const [col, row] = pos.get(l.id);
-    const cell = document.createElement("div");
-    cell.className = "grid-cell";
-    cell.style.gridColumn = `${col - minCol + 1}`;
-    cell.style.gridRow = `${row - minRow + 1}`;
-
-    const nameEl = document.createElement("div");
-    nameEl.className = "grid-cell-name";
-    nameEl.textContent = l.name;
-    cell.appendChild(nameEl);
-
-    const idEl = document.createElement("div");
-    idEl.className = "grid-cell-id";
-    idEl.textContent = l.id;
-    cell.appendChild(idEl);
-
-    // 出生点徽标
-    if (spawn.agent === l.id || spawn.player === l.id) {
-      const badge = document.createElement("span");
-      badge.className = "spawn-badge";
-      if (spawn.agent === l.id && spawn.player === l.id) {
-        badge.textContent = "出生点";
-      } else if (spawn.agent === l.id) {
-        badge.textContent = "Agent 出生点";
-      } else {
-        badge.textContent = "玩家出生点";
-      }
-      cell.appendChild(badge);
-    }
-
-    // 已收起的出口：折叠成出发地块格内的标签（点击展开）
-    for (const a of allAvatars) {
-      if (!collapsed.has(a.exit.id) || a.exit.from_id !== l.id) {
-        continue;
-      }
-      const target = byId.get(a.targetId);
-      const tag = document.createElement("button");
-      tag.type = "button";
-      tag.className = "collapsed-tag";
-      tag.textContent = `${DIR_CHAR[a.exit.direction] || "→"} ${target ? target.name : a.targetId}`;
-      tag.title = a.exit.label;
-      tag.addEventListener("click", (event) => {
-        event.stopPropagation();
-        collapsed.delete(a.exit.id);
-        onMutate();
-      });
-      cell.appendChild(tag);
-    }
-
-    // 重名地块悬浮全体高亮（识别重名）
-    const sameName = world.locations.filter((o) => o.name === l.name);
-    const highlight = () => {
-      for (const o of sameName) {
-        for (const el of cellEls.get(o.id) || []) {
-          el.classList.add("cell-highlight");
-        }
-      }
-    };
-    const unhighlight = () => {
-      for (const o of sameName) {
-        for (const el of cellEls.get(o.id) || []) {
-          el.classList.remove("cell-highlight");
-        }
-      }
-    };
-    cell.addEventListener("mouseenter", highlight);
-    cell.addEventListener("mouseleave", unhighlight);
-    cell.addEventListener("click", () => openLocationForm(l));
-    if (!cellEls.has(l.id)) {
-      cellEls.set(l.id, []);
-    }
-    cellEls.get(l.id).push(cell);
-    grid.appendChild(cell);
-  }
-
-  // ---------- 分身格 ----------
-  for (const [k, avatars] of avatarByCell) {
-    const [col, row] = k.split(",").map(Number);
-    const cell = document.createElement("div");
-    cell.className = "grid-cell grid-cell-avatar";
-    cell.style.gridColumn = `${col - minCol + 1}`;
-    cell.style.gridRow = `${row - minRow + 1}`;
-    for (const a of avatars) {
-      const target = byId.get(a.targetId);
-      const rowEl = document.createElement("div");
-      rowEl.className = "avatar-row";
-      const nameEl = document.createElement("span");
-      nameEl.className = "avatar-name";
-      nameEl.textContent = target ? target.name : a.targetId;
-      const badge = document.createElement("span");
-      badge.className = "avatar-badge";
-      badge.textContent = "分身";
-      const fold = document.createElement("button");
-      fold.type = "button";
-      fold.className = "avatar-fold";
-      fold.textContent = "收起";
-      fold.addEventListener("click", (event) => {
-        event.stopPropagation();
-        collapsed.add(a.exit.id);
-        onMutate();
-      });
-      rowEl.appendChild(nameEl);
-      rowEl.appendChild(badge);
-      rowEl.appendChild(fold);
-      rowEl.addEventListener("click", () => openExitForm(a.exit));
-      cell.appendChild(rowEl);
-    }
-    grid.appendChild(cell);
-  }
-
-  // ---------- 间隙连接标签：每条出口画在 from→目标格 的间隙中点（按间隙分组堆叠） ----------
-  const gapGroups = new Map();
+  // 出口方向可能把连接块顶到边界外（如最右列地块向右的出口）：扩边界保证连接轨道存在
   for (const e of world.exits || []) {
-    if (collapsed.has(e.id)) {
+    const from = pos.get(e.from_id);
+    if (!from) {
       continue;
     }
+    const [c, r] = from;
+    const [dc, dr] = DIR_OFFSETS[e.direction] || DIR_OFFSETS.up;
+    if (dc > 0 && maxCol === c) {
+      maxCol++;
+    } else if (dc < 0 && minCol === c) {
+      minCol--;
+    } else if (dr > 0 && maxRow === r) {
+      maxRow++;
+    } else if (dr < 0 && minRow === r) {
+      minRow--;
+    }
+  }
+
+  // 出口按连接块分组
+  const blockMap = new Map(); // key -> [{exit, side, special}]
+  for (const e of world.exits || []) {
     const from = pos.get(e.from_id);
-    const target = pos.get(e.to_id);
-    if (!from || !target) {
+    if (!from) {
       continue;
     }
     const [dc, dr] = DIR_OFFSETS[e.direction] || DIR_OFFSETS.up;
     const tc = from[0] + dc;
     const tr = from[1] + dr;
-    let gapKey;
-    let gRow;
-    let gCol;
-    if (tc > from[0]) {
-      gapKey = `h:${from[1]}:${from[0]}`;
-      gRow = from[1];
-      gCol = from[0];
-    } else if (tc < from[0]) {
-      gapKey = `h:${from[1]}:${tc}`;
-      gRow = from[1];
-      gCol = tc;
-    } else if (tr < from[1]) {
-      gapKey = `v:${tr}:${from[0]}`;
-      gRow = tr;
-      gCol = from[0];
-    } else {
-      gapKey = `v:${from[1]}:${from[0]}`;
-      gRow = from[1];
-      gCol = from[0];
+    const key = exitBlockKey(from[0], from[1], e.direction);
+    const destPos = pos.get(e.to_id);
+    // 目标主位不在出发方向的相邻格 → 特殊连接（虚线强调条，目的地自选）
+    const special = !destPos || destPos[0] !== tc || destPos[1] !== tr;
+    const side =
+      e.direction === "right"
+        ? "r"
+        : e.direction === "left"
+          ? "l"
+          : e.direction === "down"
+            ? "d"
+            : "u";
+    if (!blockMap.has(key)) {
+      blockMap.set(key, []);
     }
-    if (!gapGroups.has(gapKey)) {
-      gapGroups.set(gapKey, []);
-    }
-    gapGroups.get(gapKey).push({ exit: e, gRow, gCol });
+    blockMap.get(key).push({ exit: e, side, special });
   }
 
-  for (const group of gapGroups.values()) {
-    const { gRow, gCol } = group[0];
-    const horizontal =
-      group[0].exit.direction === "left" || group[0].exit.direction === "right";
-    const n = group.length;
-    group.forEach((item, i) => {
-      const { exit } = item;
-      const chip = document.createElement("div");
-      chip.className =
-        exit.reveal_target === false ? "edge-chip edge-chip-hidden" : "edge-chip";
-      chip.textContent = `${DIR_CHAR[exit.direction] || "→"} ${exit.label}`;
-      chip.title = exit.label;
-      chip.style.transform = "translate(-50%, -50%)";
-      if (horizontal) {
-        chip.style.left = `${gapX(gCol - minCol)}px`;
-        chip.style.top = `${rowCy(gRow - minRow) + (i - (n - 1) / 2) * 26}px`;
+  // 表格：奇数轨 = 地块（CELL），偶数轨 = 连接（CONN）
+  const table = document.createElement("div");
+  table.className = "edit-table";
+  table.style.gridTemplateColumns = `repeat(${maxCol - minCol}, ${CELL}px ${CONN}px) ${CELL}px`;
+  table.style.gridTemplateRows = `repeat(${maxRow - minRow}, ${CELL}px ${CONN}px) ${CELL}px`;
+  container.appendChild(table);
+
+  const tCol = (c) => 2 * (c - minCol) + 1;
+  const tRow = (r) => 2 * (r - minRow) + 1;
+  const spawn = world.spawn || {};
+
+  // ---------- 地块格（奇数-奇数轨道） ----------
+  for (let c = minCol; c <= maxCol; c++) {
+    for (let r = minRow; r <= maxRow; r++) {
+      const loc = locAt.get(cellKey(c, r));
+      const cell = document.createElement("div");
+      cell.style.gridColumn = String(tCol(c));
+      cell.style.gridRow = String(tRow(r));
+      if (loc) {
+        cell.className = "loc-cell";
+        const nameEl = document.createElement("div");
+        nameEl.className = "loc-cell-name";
+        nameEl.textContent = loc.name;
+        cell.appendChild(nameEl);
+        const idEl = document.createElement("div");
+        idEl.className = "loc-cell-id";
+        idEl.textContent = loc.id;
+        cell.appendChild(idEl);
+        const badgeText = spawnBadgeText(spawn, loc.id);
+        if (badgeText) {
+          const badge = document.createElement("span");
+          badge.className = "spawn-badge";
+          badge.textContent = badgeText;
+          cell.appendChild(badge);
+        }
+        if (state.selection?.kind === "location" && state.selection.id === loc.id) {
+          cell.classList.add("selected");
+        }
+        cell.addEventListener("click", () => selectLocation(loc));
       } else {
-        chip.style.left = `${colCx(gCol - minCol) + (i - (n - 1) / 2) * 168}px`;
-        chip.style.top = `${gapY(gRow - minRow)}px`;
+        cell.className = "loc-cell loc-cell-empty";
+        cell.title = "空地";
+        if (state.editMode === "edit") {
+          cell.addEventListener("click", () => selectSlot(c, r));
+        }
       }
-      grid.appendChild(chip);
-    });
+      table.appendChild(cell);
+    }
   }
 
-  syncAvatarToggleLabel(world, allAvatars);
+  // ---------- 占位小格（偶数-偶数轨道）：无意义，纯排版 ----------
+  for (let c = minCol; c < maxCol; c++) {
+    for (let r = minRow; r < maxRow; r++) {
+      const ph = document.createElement("div");
+      ph.className = "ph-cell";
+      ph.style.gridColumn = String(tCol(c) + 1);
+      ph.style.gridRow = String(tRow(r) + 1);
+      table.appendChild(ph);
+    }
+  }
+
+  // ---------- 横向连接块（偶数列-奇数行） ----------
+  for (let c = minCol; c < maxCol; c++) {
+    for (let r = minRow; r <= maxRow; r++) {
+      const key = `h:${r}:${c}`;
+      renderBlock(table, blockMap.get(key) || [], tCol(c) + 1, tRow(r), true, key);
+    }
+  }
+
+  // ---------- 纵向连接块（奇数列-偶数行） ----------
+  for (let c = minCol; c <= maxCol; c++) {
+    for (let r = minRow; r < maxRow; r++) {
+      const key = `v:${c}:${r}`;
+      renderBlock(table, blockMap.get(key) || [], tCol(c), tRow(r) + 1, false, key);
+    }
+  }
+
+  renderPanel(world);
 }
 
-function syncAvatarToggleLabel(world, allAvatars) {
-  const btn = $("#btn-toggle-avatars");
-  if (!btn) {
-    return;
+// 块内连接条集合：同侧多条普通边合并为一条方向条（两侧都有 → 双向条）；
+// 特殊连接（目的地自选）各自独立为虚线强调条。
+function collectBars(group, isH) {
+  const norm = { r: [], l: [], d: [], u: [] };
+  const specials = [];
+  for (const item of group) {
+    if (item.special) {
+      specials.push(item);
+    } else {
+      norm[item.side].push(item);
+    }
   }
-  const ids = allAvatars.map((a) => a.exit.id);
-  const allCollapsed =
-    ids.length > 0 && ids.every((id) => state.collapsedExits.has(id));
-  btn.textContent = allCollapsed ? "展开全部分身" : "收起全部分身";
-}
-
-function toggleAllAvatars() {
-  const world = state.world;
-  if (!world) {
-    return;
-  }
-  const all = computeAvatars(world, computePositions(world.locations)).map(
-    (a) => a.exit.id
-  );
-  const allCollapsed =
-    all.length > 0 && all.every((id) => state.collapsedExits.has(id));
-  if (allCollapsed) {
-    for (const id of all) {
-      state.collapsedExits.delete(id);
+  const bars = [];
+  const pushSide = (side, arrowSide) => {
+    if (norm[side].length > 0) {
+      bars.push({ side: arrowSide, items: norm[side], special: false });
+    }
+  };
+  if (isH) {
+    if (norm.r.length > 0 && norm.l.length > 0) {
+      bars.push({ side: "b", items: [...norm.r, ...norm.l], special: false });
+    } else {
+      pushSide("r", "r");
+      pushSide("l", "l");
     }
   } else {
-    for (const id of all) {
-      state.collapsedExits.add(id);
+    if (norm.d.length > 0 && norm.u.length > 0) {
+      bars.push({ side: "b", items: [...norm.d, ...norm.u], special: false });
+    } else {
+      pushSide("d", "d");
+      pushSide("u", "u");
     }
   }
-  onMutate();
+  for (const s of specials) {
+    bars.push({ side: s.side, items: [s], special: true });
+  }
+  return bars;
 }
 
-function openLocationForm(loc) {
-  state.lastNodeId = loc ? loc.id : null;
-  const form = locationForm(loc, () => onMutate());
-  openModal(loc ? "编辑地块" : "新建地块", form.el, form.actions);
+function renderBlock(table, group, tCol, tRow, isH, key) {
+  const block = document.createElement("div");
+  block.className = "conn-block";
+  block.style.gridColumn = String(tCol);
+  block.style.gridRow = String(tRow);
+  if (group.length === 0) {
+    block.classList.add("conn-block-empty");
+    block.title = "该方向没有连接";
+  } else {
+    block.classList.add("has-exits");
+  }
+  if (state.selection?.kind === "block" && state.selection.key === key) {
+    block.classList.add("selected");
+  }
+  block.addEventListener("click", () => selectBlock(key));
+  if (group.length === 0) {
+    table.appendChild(block);
+    return;
+  }
+  for (const bar of collectBars(group, isH)) {
+    const isSelected =
+      state.selection?.kind === "exit" &&
+      bar.items.some((item) => state.selection.id === item.exit.id);
+    block.appendChild(connBar(bar, isH, isSelected, key));
+  }
+  table.appendChild(block);
 }
 
-function openExitForm(exit) {
-  const form = exitForm(exit, () => onMutate());
-  openModal(exit ? "编辑出口" : "新建出口", form.el, form.actions);
+// 方向条：横向 / 纵向，单向箭头或双向双箭头；特殊连接为虚线强调条
+function connBar(bar, isH, isSelected, blockKey) {
+  const [w, h] = isH ? [BAR, BAR_H] : [BAR_H, BAR];
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  svg.setAttribute("width", w);
+  svg.setAttribute("height", h);
+  svg.classList.add("conn-bar");
+  if (bar.special) {
+    svg.classList.add("conn-special");
+  }
+  if (isSelected) {
+    svg.classList.add("selected");
+  }
+  const mid = (isH ? h : w) / 2;
+  const line = document.createElementNS(SVG_NS, "line");
+  if (isH) {
+    line.setAttribute("x1", 2);
+    line.setAttribute("y1", mid);
+    line.setAttribute("x2", w - 2);
+    line.setAttribute("y2", mid);
+  } else {
+    line.setAttribute("x1", mid);
+    line.setAttribute("y1", 2);
+    line.setAttribute("x2", mid);
+    line.setAttribute("y2", h - 2);
+  }
+  svg.appendChild(line);
+  const addArrow = (points) => {
+    const poly = document.createElementNS(SVG_NS, "polygon");
+    poly.setAttribute("points", points);
+    svg.appendChild(poly);
+  };
+  const s = bar.side;
+  if (isH) {
+    if (s === "r" || s === "b") {
+      addArrow(`${w - 9},${mid - 4} ${w - 9},${mid + 4} ${w - 2},${mid}`);
+    }
+    if (s === "l" || s === "b") {
+      addArrow(`${9},${mid - 4} ${9},${mid + 4} ${2},${mid}`);
+    }
+  } else {
+    if (s === "d" || s === "b") {
+      addArrow(`${mid - 4},${h - 9} ${mid + 4},${h - 9} ${mid},${h - 2}`);
+    }
+    if (s === "u" || s === "b") {
+      addArrow(`${mid - 4},${9} ${mid + 4},${9} ${mid},${2}`);
+    }
+  }
+  // 单条连接 → 点击直接选中该出口；多条合并 → 选中整个连接块
+  const singleExit = bar.items.length === 1 ? bar.items[0].exit : null;
+  svg.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (singleExit) {
+      selectExit(singleExit.id);
+    } else {
+      selectBlock(blockKey);
+    }
+  });
+  svg.title = bar.items.map((item) => item.exit.label).join(" / ");
+  return svg;
+}
+
+// ---------- 选择与详情栏 ----------
+function selectLocation(loc) {
+  state.selection = { kind: "location", id: loc.id };
+  renderEdit(currentWorld);
+}
+
+function selectSlot(col, row) {
+  state.selection = { kind: "slot", col, row };
+  renderEdit(currentWorld);
+}
+
+function selectBlock(key) {
+  state.selection = { kind: "block", key };
+  renderEdit(currentWorld);
+}
+
+function selectExit(id) {
+  state.selection = { kind: "exit", id };
+  renderEdit(currentWorld);
+}
+
+function renderPanel(world) {
+  const panel = $("#detail-panel");
+  const body = $("#detail-body");
+  body.textContent = "";
+  panel.hidden = !state.detailOpen;
+  if (!state.detailOpen) {
+    return;
+  }
+
+  const bus = {
+    onSubmit: () => onMutate(),
+    onCreatedLocation: (id) => {
+      state.selection = { kind: "location", id };
+    },
+    onSelectExit: (id) => selectExit(id),
+  };
+
+  const sel = state.selection;
+  if (!sel) {
+    $("#detail-title").textContent = "详情";
+    body.appendChild(hintEl("未选择任何地块或连接。"));
+    return;
+  }
+
+  const locations = (world && world.locations) || [];
+  const exits = (world && world.exits) || [];
+  const byId = new Map(locations.map((l) => [l.id, l]));
+  const pos = computePositions(locations);
+  const locAt = new Map();
+  for (const l of locations) {
+    locAt.set(cellKey(pos.get(l.id)[0], pos.get(l.id)[1]), l);
+  }
+
+  if (sel.kind === "location") {
+    const loc = byId.get(sel.id);
+    $("#detail-title").textContent = "地块";
+    if (!loc) {
+      body.appendChild(hintEl("该地块已不存在。"));
+      return;
+    }
+    const exitsFrom = exits.filter((e) => e.from_id === loc.id);
+    body.appendChild(
+      state.editMode === "edit"
+        ? locationEditEl(loc, exitsFrom, byId, bus, pos)
+        : locationViewEl(loc, exitsFrom, byId, bus)
+    );
+  } else if (sel.kind === "slot") {
+    $("#detail-title").textContent = "新建地块";
+    body.appendChild(slotCreateEl(locations, sel.col, sel.row, byId, bus));
+  } else if (sel.kind === "block") {
+    $("#detail-title").textContent = "连接";
+    const info = blockInfo(world, sel.key, pos, locAt);
+    body.appendChild(
+      state.editMode === "edit"
+        ? blockEditEl(info, byId, bus, pos)
+        : blockViewEl(info, byId, bus)
+    );
+  } else if (sel.kind === "exit") {
+    const exit = exits.find((e) => e.id === sel.id);
+    $("#detail-title").textContent = "出口";
+    if (!exit) {
+      body.appendChild(hintEl("该出口已不存在。"));
+      return;
+    }
+    body.appendChild(
+      state.editMode === "edit" ? exitEditEl(exit, byId, bus) : exitViewEl(exit, byId, bus)
+    );
+  }
+}
+
+function hintEl(text) {
+  const p = document.createElement("p");
+  p.className = "hint";
+  p.textContent = text;
+  return p;
 }

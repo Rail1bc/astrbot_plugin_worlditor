@@ -37,11 +37,39 @@
     <main class="page-body">
       <section id="view-edit">
         <div class="edit-toolbar">
-          <button id="btn-new-location" type="button" class="btn">＋ 新建地块</button>
-          <button id="btn-new-exit" type="button" class="btn">＋ 新建出口</button>
-          <button id="btn-toggle-avatars" type="button" class="btn">收起全部分身</button>
+          <div class="mode-switch" role="tablist" aria-label="编辑子模式">
+            <button
+              id="edit-mode-view"
+              type="button"
+              class="mode-btn"
+              role="tab"
+              aria-selected="false"
+            >
+              查看
+            </button>
+            <button
+              id="edit-mode-edit"
+              type="button"
+              class="mode-btn active"
+              role="tab"
+              aria-selected="true"
+            >
+              编辑
+            </button>
+          </div>
+          <button id="btn-toggle-detail" type="button" class="btn">收起详情栏</button>
+          <span id="edit-hint" class="hint"></span>
         </div>
-        <div id="graph" class="graph"></div>
+        <div id="edit-body">
+          <div id="graph" class="graph"></div>
+          <aside id="detail-panel" class="detail-panel">
+            <div class="detail-head">
+              <span id="detail-title">详情</span>
+              <button id="detail-close" type="button" class="modal-x" aria-label="收起详情栏">✕</button>
+            </div>
+            <div id="detail-body" class="detail-body"></div>
+          </aside>
+        </div>
         <div id="map-error" class="map-error" hidden></div>
       </section>
       <section id="view-play" hidden>
