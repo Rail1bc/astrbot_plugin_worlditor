@@ -1,14 +1,43 @@
 // play-view.js — 玩家模式：当前地块 + 有出边连接的 1 跳目标
 // 地图 div（#play-map）：中间是只含地块名称的小块，上下左右直接连接 1 跳可达地块
-// （十字布局，无连接的槽位不可见；所有边一视同仁，无箭头简单连线、不查反向边、
-// 不画方向；隐藏目标显示 ???；无回环——自环出口照常占槽位）；
-// 平级信息 div（#play-info）：当前地块说明文本；
+// （十字布局，目标格只显示地块名；无连接的槽位不可见；所有边一视同仁，无箭头简单
+// 连线、不查反向边、不画方向；隐藏目标显示 ???；无回环——自环出口照常占槽位）；
+// 地图 div 动态填充剩余空间，棋盘正方形取「地图区域的宽/高较小值」并随区域变化
+// 自适应（ResizeObserver）；平级信息 div（#play-info）：当前地块说明文本、内部滚动；
 // 违规地图（出度>4 或同方向冲突）折叠「+N」展开全部出口列表。
 
 import { $ } from "./shared.js";
 
 const SVG = "http://www.w3.org/2000/svg";
 const ORDER = ["up", "right", "down", "left"];
+
+// 棋盘自适应：正方形尺寸 = 地图区域的宽与「高减去兄弟元素（hint/+N 列表）」的较小值
+function fitBoard(board) {
+  if (!board) {
+    return;
+  }
+  const map = $("#play-map");
+  if (!map) {
+    return;
+  }
+  let used = 0;
+  for (const child of map.children) {
+    if (child !== board) {
+      used += child.offsetHeight;
+    }
+  }
+  const size = Math.max(
+    80,
+    Math.min(map.clientWidth, map.clientHeight - used - 14)
+  );
+  board.style.width = `${size}px`;
+  board.style.height = `${size}px`;
+}
+
+const resizeObserver =
+  typeof ResizeObserver !== "undefined"
+    ? new ResizeObserver(() => fitBoard(document.querySelector("#play-map .play-board")))
+    : null;
 
 // 槽位中心在 3×3 网格中的百分比坐标（与 CSS grid 对齐）
 const SIDE = 100 / 6; // 1/6：第 1 列/行的中心
@@ -52,10 +81,14 @@ export function renderPlay(world, moveTo) {
     }
   }
 
-  // 十字棋盘（正方形），内放中心小块、连线层与槽位格
+  // 十字棋盘（正方形，尺寸按地图区域动态计算），内放中心小块、连线层与槽位格
   const board = document.createElement("div");
   board.className = "play-board";
   mapEl.appendChild(board);
+  fitBoard(board);
+  if (resizeObserver) {
+    resizeObserver.observe(mapEl);
+  }
 
   // 中心小块：只含地块名称，无说明文本
   const center = document.createElement("div");
@@ -113,6 +146,7 @@ export function renderPlay(world, moveTo) {
     hint.className = "hint";
     hint.textContent = "这里没有任何出口，你似乎被困住了。";
     mapEl.appendChild(hint);
+    fitBoard(board);
   }
 
   // 违规地图折叠兜底：展开全部出口列表（保留 exit_id），可收回
@@ -151,10 +185,12 @@ export function renderPlay(world, moveTo) {
       close.addEventListener("click", () => {
         list.remove();
         btn.hidden = false;
+        fitBoard(board);
       });
       list.appendChild(close);
       btn.hidden = true;
       mapEl.appendChild(list);
+      fitBoard(board);
     });
     mapEl.appendChild(btn);
   }
