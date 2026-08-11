@@ -1,7 +1,7 @@
 // edit-forms.js — 右侧详情栏内容构建（查看模式只读 / 编辑模式表单）
 // 编辑模式：点击空地块 → 新建地块；点击地块 → 详情栏含「创建连接」（方向 + 目的地
 // 可自选，目的地非相邻时该出口为特殊连接，以虚线强调条显示在出发方向连接块内）；
-// 点击连接块 → 查看并编辑块内出口、可补建连接（方向固定为该块走向）。
+// 点击有连接的连接块 → 查看并编辑块内出口。创建连接只从地块发起，空连接块不可点击。
 // 上帝视角：地块永远真名；出口只有「隐藏目的地」开关与方向槽位，无 ??? 概念。
 
 import {
@@ -537,7 +537,7 @@ export function blockViewEl(info, byId, bus) {
   return box;
 }
 
-export function blockEditEl(info, byId, bus, pos) {
+export function blockEditEl(info, byId, bus) {
   const box = document.createElement("div");
   box.className = "detail-stack";
   box.appendChild(kv("方位", describeBlock(info, byId)));
@@ -548,39 +548,6 @@ export function blockEditEl(info, byId, bus, pos) {
   for (const e of info.exits) {
     box.appendChild(exitItemEl(e, byId, bus));
   }
-
-  // 创建连接：从块的一侧出发，方向固定为该块的走向（目的地可自选 → 可造特殊连接）
-  const candidates = [];
-  if (info.kind === "h") {
-    if (info.left) candidates.push([info.left.id, "right"]);
-    if (info.right) candidates.push([info.right.id, "left"]);
-  } else {
-    if (info.top) candidates.push([info.top.id, "down"]);
-    if (info.bottom) candidates.push([info.bottom.id, "up"]);
-  }
-  if (candidates.length === 0) {
-    return box;
-  }
-  box.appendChild(sectionTitle("创建连接"));
-  if (candidates.length === 1) {
-    const [fromId, dir] = candidates[0];
-    box.appendChild(exitCreateEl(fromId, byId, bus, dir, pos));
-    return box;
-  }
-  const dirMap = new Map(candidates);
-  const fromInput = selectInput(
-    candidates.map(([id]) => [id, locName(byId, id)]),
-    candidates[0][0]
-  );
-  const createWrap = document.createElement("div");
-  const renderCreate = () => {
-    createWrap.textContent = "";
-    createWrap.appendChild(exitCreateEl(fromInput.value, byId, bus, dirMap.get(fromInput.value), pos));
-  };
-  fromInput.addEventListener("change", renderCreate);
-  renderCreate();
-  box.appendChild(field("从哪侧出发", fromInput));
-  box.appendChild(createWrap);
   return box;
 }
 

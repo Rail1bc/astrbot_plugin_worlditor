@@ -388,7 +388,7 @@ body {
 }
 
 .loc-cell-name {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   line-height: 1.25;
   max-width: 100%;
@@ -396,7 +396,7 @@ body {
 }
 
 .loc-cell-id {
-  font-size: 9px;
+  font-size: 10px;
   color: var(--text-dim);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   max-width: 100%;
@@ -434,6 +434,11 @@ body {
 .conn-block-empty {
   border-style: dashed;
   background: transparent;
+  cursor: default; /* 空连接块不可点击：不提示可交互 */
+}
+
+.conn-block-empty:hover {
+  border-color: var(--border);
 }
 
 .conn-block.selected {
@@ -479,12 +484,17 @@ body {
   fill: var(--danger);
 }
 
-/* 占位小格（偶数-偶数轨道）：无意义，纯排版 */
+/* 占位小格（偶数-偶数轨道）：无意义的排版占位，斜纹底纹 + 虚线边框表示「无效、不可交互」 */
 .ph-cell {
   position: absolute;
-  border: 1px dashed var(--border);
-  border-radius: 4px;
-  opacity: 0.35;
+  border: 1px dashed color-mix(in srgb, var(--edge) 55%, transparent);
+  border-radius: 6px;
+  background: repeating-linear-gradient(
+    45deg,
+    transparent 0 4px,
+    color-mix(in srgb, var(--edge) 13%, transparent) 4px 6px
+  );
+  opacity: 0.45;
 }
 
 /* 玩家视图：地图 div 动态填充剩余空间；详情列内部滚动 */

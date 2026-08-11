@@ -22,11 +22,11 @@ import {
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 // 尺寸常量（与 style.css 的轨道尺寸一致）
-const CELL = 88; // 地块轨道（正方形）
-const CONN = 64; // 连接轨道（连接块 / 占位小格）
+const CELL = 120; // 地块轨道（正方形，更大便于阅读名字）
+const CONN = 36; // 连接轨道（连接块 / 占位小格，更窄）
 const GAP = 5; // 格间距
 const PITCH = CELL + GAP + CONN + GAP; // 一个「地块轨 + 连接轨」周期
-const BAR = 48; // 连接条长度
+const BAR = CONN - 8; // 连接条长度（贴合窄连接块内宽）
 const BAR_H = 22; // 连接条高度（含箭头）
 const HALO = 2; // 内容边界外渲染的空地块圈数（可点击新建 → 世界向外生长）
 const ZOOM_MIN = 0.2;
@@ -403,24 +403,22 @@ function collectBars(group, isH) {
 function renderBlock(canvas, group, x, y, isH, key) {
   const block = document.createElement("div");
   block.className = "conn-block";
-  if (group.length === 0) {
-    block.classList.add("conn-block-empty");
-    block.title = "该方向没有连接";
-  } else {
-    block.classList.add("has-exits");
-  }
   block.style.left = `${x}px`;
   block.style.top = `${y}px`;
   block.style.width = `${isH ? CONN : CELL}px`;
   block.style.height = `${isH ? CELL : CONN}px`;
+  if (group.length === 0) {
+    // 空连接块不可点击：创建连接只能从地块面板发起（延伸出去）
+    block.classList.add("conn-block-empty");
+    block.title = "该方向没有连接；创建连接请先点击地块";
+    canvas.appendChild(block);
+    return;
+  }
+  block.classList.add("has-exits");
   if (state.selection?.kind === "block" && state.selection.key === key) {
     block.classList.add("selected");
   }
   block.addEventListener("click", () => selectBlock(key));
-  if (group.length === 0) {
-    canvas.appendChild(block);
-    return;
-  }
   for (const bar of collectBars(group, isH)) {
     const isSelected =
       state.selection?.kind === "exit" &&
@@ -684,9 +682,7 @@ function renderPanel(world) {
     $("#detail-title").textContent = "连接";
     const info = blockInfo(world, sel.key, pos, locAt);
     body.appendChild(
-      state.editMode === "edit"
-        ? blockEditEl(info, byId, bus, pos)
-        : blockViewEl(info, byId, bus)
+      state.editMode === "edit" ? blockEditEl(info, byId, bus) : blockViewEl(info, byId, bus)
     );
   } else if (sel.kind === "exit") {
     const exit = exits.find((e) => e.id === sel.id);
