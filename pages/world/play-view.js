@@ -97,11 +97,7 @@ export function renderPlay(world, moveTo) {
       tName.textContent = "???";
       tName.classList.add("play-unknown");
     }
-    const tLabel = document.createElement("div");
-    tLabel.className = "play-target-label";
-    tLabel.textContent = exit.label;
     cell.appendChild(tName);
-    cell.appendChild(tLabel);
     cell.addEventListener("click", () => void moveTo(exit.exit_id));
     board.appendChild(cell);
   }
