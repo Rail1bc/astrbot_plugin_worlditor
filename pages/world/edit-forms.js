@@ -1,7 +1,18 @@
 // edit-forms.js — 地块 / 出口的创建与编辑表单（自绘 modal 内）
 // 上帝视角：地块永远真名；出口只有「隐藏目的地」开关与方向槽位，无 ??? 概念。
 
-import { apiPost, confirmModal, hideModal, openModal, state } from "./shared.js";
+import {
+  apiPost,
+  cellKey,
+  computePositions,
+  confirmModal,
+  DIR_OFFSETS,
+  firstFreeCell,
+  hideModal,
+  OPPOSITE_DIR,
+  openModal,
+  state,
+} from "./shared.js";
 
 const DIRECTIONS = [
   ["up", "上"],
@@ -10,23 +21,56 @@ const DIRECTIONS = [
   ["left", "左"],
 ];
 
-// 同 from 的出边方向互异（编辑器保证）：新建时默认选空闲方向，避免意外冲突
-function refreshDirectionDefault(fromId, radios) {
-  const exits = (state.world && state.world.exits) || [];
+// ---------- 出口方向自动推荐 ----------
+// 新建出口的方向语义（编辑表格的相邻约束）：
+// ① 反向边存在（to→from）→ 推荐其反方向（保证 A右是B ⇔ B左是A）
+// ② 否则目标主位与出发地块相邻 → 按相对位置推导方向
+// ③ 否则 → 出发地块首个空闲方向（非相邻连接则表格生成分身）
+// ①②结果与同 from 其它出边方向冲突时回退 ③，避免槽位重叠。
+
+function usedDirections(fromId, exceptId = null) {
   const used = new Set();
-  for (const e of exits) {
-    if (e.from_id === fromId) {
+  for (const e of state.world?.exits || []) {
+    if (e.from_id === fromId && e.id !== exceptId) {
       used.add(e.direction);
     }
   }
-  const checked = radios.find((r) => r.checked);
-  if (checked && !used.has(checked.value)) {
-    return; // 当前选中方向未被占用，保持
+  return used;
+}
+
+function pickFreeDirection(fromId, exceptId = null) {
+  const used = usedDirections(fromId, exceptId);
+  for (const [dir] of DIRECTIONS) {
+    if (!used.has(dir)) {
+      return dir;
+    }
   }
-  const free = radios.find((r) => !used.has(r.value));
-  if (free) {
-    free.checked = true;
+  return "up";
+}
+
+function recommendedDirection(fromId, toId, exceptId = null) {
+  const world = state.world;
+  const exits = (world && world.exits) || [];
+  const reverse = exits.find((e) => e.from_id === toId && e.to_id === fromId);
+  if (reverse) {
+    const dir = OPPOSITE_DIR[reverse.direction] || "up";
+    return usedDirections(fromId, exceptId).has(dir)
+      ? pickFreeDirection(fromId, exceptId)
+      : dir;
   }
+  const pos = computePositions((world && world.locations) || []);
+  const from = pos.get(fromId);
+  const target = pos.get(toId);
+  if (from && target) {
+    for (const [dir, [dc, dr]] of Object.entries(DIR_OFFSETS)) {
+      if (target[0] === from[0] + dc && target[1] === from[1] + dr) {
+        return usedDirections(fromId, exceptId).has(dir)
+          ? pickFreeDirection(fromId, exceptId)
+          : dir;
+      }
+    }
+  }
+  return pickFreeDirection(fromId, exceptId);
 }
 
 function field(labelText, input) {
@@ -57,10 +101,10 @@ function textareaInput(value = "") {
   return input;
 }
 
-function numberInput(value = "") {
+function numberInput(value = "", step = "any") {
   const input = document.createElement("input");
   input.type = "number";
-  input.step = "any";
+  input.step = step;
   input.className = "form-input";
   input.value = value;
   return input;
@@ -99,6 +143,22 @@ function currentLayoutValue(loc) {
   return ["", ""];
 }
 
+// 新建地块默认落位：优先最近点选地块（lastNodeId）的邻格，否则环形扫描空闲格
+function defaultCellForNewLocation() {
+  const locations = (state.world && state.world.locations) || [];
+  const pos = computePositions(locations);
+  const occupied = new Set([...pos.values()].map(([c, r]) => cellKey(c, r)));
+  const prefers = [];
+  const [lc, lr] = pos.get(state.lastNodeId) || [];
+  if (Number.isFinite(lc)) {
+    for (const [dc, dr] of Object.values(DIR_OFFSETS)) {
+      prefers.push([lc + dc, lr + dr]);
+    }
+  }
+  const [c, r] = firstFreeCell(occupied, prefers);
+  return [String(c), String(r)];
+}
+
 // ---------- 地块表单 ----------
 export function locationForm(loc, onSubmit) {
   const form = document.createElement("form");
@@ -110,15 +170,18 @@ export function locationForm(loc, onSubmit) {
   }
   const nameInput = textInput(loc ? loc.name : "", "地块名称");
   const descInput = textareaInput(loc ? loc.description : "");
-  const [curX, curY] = currentLayoutValue(loc);
-  const xInput = numberInput(curX);
-  const yInput = numberInput(curY);
+  // 新建：默认落在空闲格（优先最近点选地块的邻格）；编辑：取当前 layout
+  const [curCol, curRow] = loc
+    ? currentLayoutValue(loc)
+    : defaultCellForNewLocation();
+  const colInput = numberInput(curCol, 1);
+  const rowInput = numberInput(curRow, 1);
 
   form.appendChild(field("id", idInput));
   form.appendChild(field("名称", nameInput));
   form.appendChild(field("描述", descInput));
-  form.appendChild(field("布局 x（可选）", xInput));
-  form.appendChild(field("布局 y（可选）", yInput));
+  form.appendChild(field("列（col，可选）", colInput));
+  form.appendChild(field("行（row，可选）", rowInput));
   const msg = formMsg(form);
 
   const actions = [];
@@ -148,21 +211,29 @@ export function locationForm(loc, onSubmit) {
     label: loc ? "保存" : "创建",
     primary: true,
     onClick: () =>
-      void submitLocation(loc, { idInput, nameInput, descInput, xInput, yInput, msg, onSubmit }),
+      void submitLocation(loc, {
+        idInput,
+        nameInput,
+        descInput,
+        colInput,
+        rowInput,
+        msg,
+        onSubmit,
+      }),
   });
 
   return { el: form, actions };
 }
 
 async function submitLocation(loc, f) {
-  const { idInput, nameInput, descInput, xInput, yInput, msg, onSubmit } = f;
+  const { idInput, nameInput, descInput, colInput, rowInput, msg, onSubmit } = f;
   const name = nameInput.value.trim();
   if (!name) {
     msg.show("地块名称不能为空");
     return;
   }
-  const x = xInput.value.trim();
-  const y = yInput.value.trim();
+  const col = colInput.value.trim();
+  const row = rowInput.value.trim();
   const body = loc
     ? { id: loc.id, name, description: descInput.value }
     : { id: idInput.value.trim(), name, description: descInput.value };
@@ -170,12 +241,12 @@ async function submitLocation(loc, f) {
     msg.show("id 不能为空");
     return;
   }
-  if ((x === "") !== (y === "")) {
-    msg.show("布局 x 与 y 必须同时提供，或同时留空");
+  if ((col === "") !== (row === "")) {
+    msg.show("列与行必须同时提供，或同时留空");
     return;
   }
-  if (x !== "") {
-    body.layout = { x: Number(x), y: Number(y) };
+  if (col !== "") {
+    body.layout = { x: Number(col), y: Number(row) };
   } else if (loc) {
     body.layout = null; // 显式清空坐标
   }
@@ -235,12 +306,26 @@ export function exitForm(exit, onSubmit) {
     directionWrap.appendChild(label);
     radios.push(radio);
   }
+  const applyRecommendedDirection = () => {
+    const dir = recommendedDirection(fromInput.value, toInput.value, exit?.id ?? null);
+    const radio = radios.find((r) => r.value === dir);
+    if (radio) {
+      radio.checked = true;
+    }
+  };
   if (!exit) {
-    // 新建：默认选出发地块第一个空闲方向；切换出发地块冲突时自动改选
-    refreshDirectionDefault(fromInput.value, radios);
-    fromInput.addEventListener("change", () =>
-      refreshDirectionDefault(fromInput.value, radios)
-    );
+    // 新建：初始按反向边/相邻关系自动推荐；切换 from/to 时重新推荐
+    applyRecommendedDirection();
+    fromInput.addEventListener("change", applyRecommendedDirection);
+    toInput.addEventListener("change", applyRecommendedDirection);
+  } else {
+    // 编辑：保留原方向；仅当变更目标导致方向与同 from 其它出边冲突时重新推荐
+    toInput.addEventListener("change", () => {
+      const checked = radios.find((r) => r.checked);
+      if (checked && usedDirections(exit.from_id, exit.id).has(checked.value)) {
+        applyRecommendedDirection();
+      }
+    });
   }
 
   form.appendChild(field("id", idInput));

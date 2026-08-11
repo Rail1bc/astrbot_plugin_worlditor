@@ -1,10 +1,11 @@
-"""世界状态接口：全量地图 + 玩家场景 + agent 位置。"""
+"""世界状态接口：全量地图 + 玩家场景 + agent 位置 + 出生点。"""
 
 from __future__ import annotations
 
 from astrbot.api.web import json_response, request
 
 from ..world.engine import AGENT_PLAYER_ID
+from ..world.store import AGENT_START_LOCATION
 
 
 class StateAPI:
@@ -19,6 +20,13 @@ class StateAPI:
         player_id = request.query.get("player_id", "").strip()
         locations = [loc.as_dict() for loc in self.engine.list_locations()]
         exits = [e.as_dict() for e in self.engine.list_all_exits()]
+
+        # 出生点：agent 与玩家注册的起始地块（默认播种位，被删则回落第一个地块）
+        spawn_id = (
+            AGENT_START_LOCATION
+            if any(loc["id"] == AGENT_START_LOCATION for loc in locations)
+            else (locations[0]["id"] if locations else None)
+        )
 
         player = None
         if player_id:
@@ -50,5 +58,6 @@ class StateAPI:
                 "exits": exits,
                 "player": player,
                 "agent": agent,
+                "spawn": {"agent": spawn_id, "player": spawn_id},
             }
         )

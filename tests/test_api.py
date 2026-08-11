@@ -152,6 +152,9 @@ def test_state_handler(tmp_path):
         agent = data["agent"]
         assert agent["player_id"] == AGENT_PLAYER_ID
         assert agent["location_id"] == AGENT_START_LOCATION
+        # 出生点：agent 与玩家共用播种位
+        assert data["spawn"]["agent"] == AGENT_START_LOCATION
+        assert data["spawn"]["player"] == AGENT_START_LOCATION
 
     _run(_scenario(tmp_path, fn))
 
@@ -164,6 +167,8 @@ def test_state_handler_without_player(tmp_path):
         data = json.loads(resp.body)
         assert data["player"] is None
         assert data["agent"]["location_id"] == AGENT_START_LOCATION
+        assert data["spawn"]["agent"] == AGENT_START_LOCATION
+        assert data["spawn"]["player"] == AGENT_START_LOCATION
         # 玩家不存在
         resp2 = await call_handler(plugin, "world_state", query="player_id=ghost")
         data2 = json.loads(resp2.body)

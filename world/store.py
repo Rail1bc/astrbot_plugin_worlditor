@@ -31,52 +31,55 @@ AGENT_START_LOCATION = "town_plaza"
 
 # ---------- 种子地图（示例小镇，幂等播种） ----------
 # 两区：小镇区（双向街道 + 单向捷径）与迷雾区（多边同目标 / 隐藏目标 / 环路）。
-# 坐标为可视化提示；拓扑只由出边定义。
+# 坐标为可视化网格坐标（x=列、y=行，整数）；拓扑只由出边定义，但编辑视图要求
+# 「连接 = 相邻」——反向边用相反方向（A 右是 B ⇔ B 左是 A）；捷径 / 环路这类
+# 非相邻连接在编辑表格中以「地块分身」呈现（见 _SEED_EXITS 注释）。
 
 _SEED_LOCATIONS: list[tuple[str, str, str, float, float]] = [
-    # (id, name, description, x, y)
+    # (id, name, description, col, row)
     (
         "town_plaza",
         "小镇广场",
         "小镇的中心广场，人来人往。东西南北都有街道延伸出去。",
-        100,
-        150,
+        0,
+        0,
     ),
     (
         "town_cafe",
         "街角咖啡店",
         "飘着咖啡香的街角小店，暖黄的灯光透过玻璃窗。",
-        280,
-        60,
+        0,
+        -1,
     ),
-    ("town_park", "中央公园", "绿树成荫的公园，长椅上坐着悠闲的人们。", 280, 280),
-    ("town_library", "老图书馆", "静谧的图书馆，书架间弥漫着旧纸的气息。", 460, 150),
-    ("town_grocery", "杂货店", "堆满日用品的杂货店，老板正在柜台后打盹。", 470, 330),
+    ("town_park", "中央公园", "绿树成荫的公园，长椅上坐着悠闲的人们。", 0, 1),
+    ("town_library", "老图书馆", "静谧的图书馆，书架间弥漫着旧纸的气息。", 1, 0),
+    ("town_grocery", "杂货店", "堆满日用品的杂货店，老板正在柜台后打盹。", -1, 0),
     (
         "mist_forest",
         "迷雾森林",
         "浓雾弥漫的森林，前后左右看起来都一模一样，令人迷失方向。",
-        680,
-        90,
+        0,
+        2,
     ),
-    ("mist_depth", "迷雾深处", "雾更浓了，几乎看不清三米以外的任何东西。", 880, 210),
+    ("mist_depth", "迷雾深处", "雾更浓了，几乎看不清三米以外的任何东西。", 1, 2),
     (
         "mist_clearing",
         "迷雾空地",
         "雾气在这里稍稍散开，露出一小片空地。但四周的雾墙依旧。",
-        680,
-        370,
+        1,
+        3,
     ),
 ]
 
 _SEED_EXITS: list[tuple[str, str, str, str, bool, str]] = [
     # (id, from_id, to_id, label, reveal_target, direction)
-    # direction 为玩家视图十字槽位方向；同一 from 的出边方向互异（编辑器规范）。
-    # --- 小镇区：双向街道（成对反向出边） ---
+    # direction 为玩家视图十字槽位方向，同时决定编辑表格中「目标必须相邻」的方位
+    # （目标主位不在该格时，该格显示目标的分身）。同一 from 的出边方向互异。
+    # --- 小镇区：双向街道（成对反向出边，方向相反 → 表格相邻、无分身） ---
     ("town_plaza_cafe", "town_plaza", "town_cafe", "沿着东街走向咖啡店", True, "up"),
-    ("town_cafe_plaza", "town_cafe", "town_plaza", "回到广场", True, "left"),
+    ("town_cafe_plaza", "town_cafe", "town_plaza", "回到广场", True, "down"),
     ("town_plaza_park", "town_plaza", "town_park", "穿过南边的公园入口", True, "down"),
-    ("town_park_plaza", "town_park", "town_plaza", "回到广场", True, "left"),
+    ("town_park_plaza", "town_park", "town_plaza", "回到广场", True, "up"),
     (
         "town_plaza_library",
         "town_plaza",
@@ -90,19 +93,19 @@ _SEED_EXITS: list[tuple[str, str, str, str, bool, str]] = [
         "town_plaza_grocery",
         "town_plaza",
         "town_grocery",
-        "走向东边的杂货店",
+        "走向西边的杂货店",
         True,
         "left",
     ),
-    ("town_grocery_plaza", "town_grocery", "town_plaza", "回到广场", True, "left"),
-    # --- 单向捷径（只有 a→b，无 b→a） ---
+    ("town_grocery_plaza", "town_grocery", "town_plaza", "回到广场", True, "right"),
+    # --- 单向捷径（只有 a→b，无 b→a）：目标不设在相邻格 → 编辑表格显示分身 ---
     (
         "town_grocery_park",
         "town_grocery",
         "town_park",
         "穿过杂货店后门的小巷（捷径）",
         True,
-        "right",
+        "down",
     ),
     (
         "town_cafe_library",
@@ -113,7 +116,7 @@ _SEED_EXITS: list[tuple[str, str, str, str, bool, str]] = [
         "right",
     ),
     # --- 迷雾区入口 ---
-    ("town_park_forest", "town_park", "mist_forest", "向东走进迷雾森林", True, "right"),
+    ("town_park_forest", "town_park", "mist_forest", "向南走进迷雾森林", True, "down"),
     (
         "mist_forest_park",
         "mist_forest",
@@ -123,20 +126,21 @@ _SEED_EXITS: list[tuple[str, str, str, str, bool, str]] = [
         "up",
     ),
     # --- 迷雾区：多边同目标（"向左走"/"向右走"通向同一目标） + 隐藏目标 ---
+    # right 边目标相邻（mist_depth 主位在右侧），left 边目标不相邻 → 左侧出现分身。
     ("mist_forest_left", "mist_forest", "mist_depth", "向左走", False, "left"),
     ("mist_forest_right", "mist_forest", "mist_depth", "向右走", True, "right"),
-    # --- 迷雾区：环路（迷雾森林 → 迷雾深处 → 迷雾空地 → 迷雾森林） ---
+    # --- 迷雾区：环路（迷雾森林 → 迷雾深处 → 迷雾空地 → 迷雾森林），均以分身呈现 ---
     (
         "mist_forest_north",
         "mist_forest",
         "mist_clearing",
-        "拨开树丛向北摸索",
+        "拨开树丛向南摸索",
         True,
         "down",
     ),
-    ("mist_depth_forward", "mist_depth", "mist_clearing", "继续摸索前进", True, "up"),
-    ("mist_depth_back", "mist_depth", "mist_forest", "转身往回走", True, "down"),
-    ("mist_clearing_back", "mist_clearing", "mist_forest", "沿来路返回", True, "left"),
+    ("mist_depth_forward", "mist_depth", "mist_clearing", "继续摸索前进", True, "down"),
+    ("mist_depth_back", "mist_depth", "mist_forest", "转身往回走", True, "left"),
+    ("mist_clearing_back", "mist_clearing", "mist_forest", "沿来路返回", True, "right"),
 ]
 
 

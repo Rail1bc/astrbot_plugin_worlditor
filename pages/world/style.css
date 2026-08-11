@@ -150,101 +150,142 @@ body {
   overflow: auto;
 }
 
-.graph-svg {
-  display: block;
-  width: 100%;
-  height: auto;
-  min-width: 600px;
+/* 编辑网格（表格）：主格 + 分身格 + 间隙连接标签 */
+.edit-grid {
+  position: relative;
+  margin: 0 auto;
+  /* 列宽/行高/总宽/内边距由 edit-view.js 内联设置 */
 }
 
-/* 边 */
-.edge {
-  fill: none;
-  stroke: var(--edge);
-  stroke-width: 2;
+.grid-cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
   cursor: pointer;
+  text-align: center;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 
-.edge-hidden {
-  stroke: var(--edge-hidden);
-  stroke-dasharray: 6 4;
+.grid-cell:hover {
+  border-color: var(--accent);
 }
 
-.edge-hit {
-  fill: none;
-  stroke: transparent;
-  stroke-width: 16;
-  pointer-events: stroke;
-  cursor: pointer;
+.grid-cell-avatar {
+  border-style: dashed;
+  background: var(--panel);
 }
 
-.arrow-path {
-  fill: var(--edge);
-}
-
-.arrow-path-hidden {
-  fill: var(--edge-hidden);
-}
-
-.edge-label {
-  fill: var(--text-dim);
-  font-size: 12px;
-  pointer-events: none;
-}
-
-.edge-label-hidden {
-  fill: var(--danger);
-  font-style: italic;
-}
-
-/* 节点 */
-.node {
-  cursor: pointer;
-}
-
-.node circle {
-  fill: var(--panel);
-  stroke: var(--edge);
-  stroke-width: 2;
-}
-
-.node-current circle {
-  fill: var(--current);
-  stroke: var(--current);
-}
-
-.node-agent circle {
-  stroke: var(--agent);
-  stroke-width: 3;
-}
-
-.node-highlight circle {
-  stroke: var(--accent);
-  stroke-width: 4;
-}
-
-.node-highlight .node-name {
-  fill: var(--accent);
-}
-
-.node-name {
-  font-size: 13px;
+.grid-cell-name {
+  font-size: 14px;
   font-weight: 600;
-  pointer-events: none;
 }
 
-.node-id {
+.grid-cell-id {
   font-size: 10px;
-  fill: var(--text-dim);
+  color: var(--text-dim);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  pointer-events: none;
+  word-break: break-all;
 }
 
-.agent-badge {
+.spawn-badge {
   font-size: 11px;
-  fill: var(--agent);
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+/* 分身行（一个分身格内可叠多行） */
+.avatar-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.avatar-row:hover {
+  background: var(--border);
+}
+
+.avatar-name {
   font-weight: 600;
-  pointer-events: none;
+}
+
+.avatar-badge {
+  font-size: 10px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px dashed var(--text-dim);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.avatar-fold {
+  font-size: 11px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.avatar-fold:hover {
+  color: var(--accent);
+}
+
+/* 已收起的出口：折叠成出发地块格内的标签（点击展开） */
+.collapsed-tag {
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--text-dim);
+  cursor: pointer;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collapsed-tag:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* 间隙连接标签：绝对定位在格间空隙中点（edit-view.js 内联定位） */
+.edge-chip {
+  position: absolute;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--text-dim);
+  font-size: 11px;
+  white-space: nowrap;
+  z-index: 2;
+}
+
+.edge-chip-hidden {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* 重名地块悬浮全体高亮 */
+.cell-highlight {
+  box-shadow: 0 0 0 2px var(--accent);
 }
 
 /* 玩家视图：地图 div + 平级信息 div */

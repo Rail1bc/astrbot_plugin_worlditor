@@ -1,11 +1,25 @@
-// edit-view.js — 编辑模式：全图可视化（上帝视角）+ 可视化编辑交互
-// 地块永远显示真名（无 ???）；边画方向信息（单向箭头 / 双向双箭头）；
-// 重名地块悬浮全体高亮（识别重名）；点击节点/边 → 编辑表单。
+// edit-view.js — 编辑模式：网格表格（上帝视角）+ 可视化编辑交互
+// 表格：每个地块一个格子（layout 整数坐标=列/行）；连接必须相邻——出口方向决定
+// 目标相邻格；目标主位不在该格时该格显示目标「分身」（虚线框，可收起/展开）；
+// 间隙内画方向标签（↑↓←→ + 出口 label，隐藏目标仍显示真名——上帝视角）；
+// 出生点徽标（agent / 玩家注册起始）；重名地块悬浮全体高亮。
+// 点击主格 → 地块表单；点击分身 → 出口表单。
 
 import { $, openModal, state } from "./shared.js";
 import { exitForm, locationForm } from "./edit-forms.js";
+import {
+  DIR_OFFSETS,
+  cellKey,
+  computeAvatars,
+  computePositions,
+} from "./shared.js";
 
-const SVG = "http://www.w3.org/2000/svg";
+const DIR_CHAR = { up: "↑", right: "→", down: "↓", left: "←" };
+
+const CELL_W = 170;
+const CELL_H = 104;
+const GAP = 34;
+const PAD = 20;
 
 let onMutate = null;
 
@@ -13,28 +27,7 @@ export function initEditView(options) {
   onMutate = options.onMutate;
   $("#btn-new-location").addEventListener("click", () => openLocationForm(null));
   $("#btn-new-exit").addEventListener("click", () => openExitForm(null));
-}
-
-function buildLayout(locations) {
-  // 坐标：优先取 layout；未设坐标的节点用确定性网格兜底（无需力导向库）
-  const cols = Math.ceil(Math.sqrt(locations.length));
-  const cell = 220;
-  return locations.map((l, index) => {
-    if (
-      l.layout &&
-      typeof l.layout.x === "number" &&
-      typeof l.layout.y === "number"
-    ) {
-      return { ...l, x: l.layout.x, y: l.layout.y };
-    }
-    const row = Math.floor(index / cols);
-    const col = index % cols;
-    return { ...l, x: col * cell + 100, y: row * cell + 100 };
-  });
-}
-
-function hasReverse(exits, exit) {
-  return exits.some((o) => o.from_id === exit.to_id && o.to_id === exit.from_id);
+  $("#btn-toggle-avatars").addEventListener("click", toggleAllAvatars);
 }
 
 export function renderEdit(world) {
@@ -51,181 +44,274 @@ export function renderEdit(world) {
     return;
   }
 
-  const locations = buildLayout(world.locations);
-  const xs = locations.map((l) => l.x);
-  const ys = locations.map((l) => l.y);
-  const pad = 130;
-  const width = Math.max(...xs) - Math.min(...xs) + pad * 2;
-  const height = Math.max(...ys) - Math.min(...ys) + pad * 2;
+  const pos = computePositions(world.locations);
+  const allAvatars = computeAvatars(world, pos);
+  const collapsed = state.collapsedExits;
 
-  const svg = document.createElementNS(SVG, "svg");
-  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
-  svg.classList.add("graph-svg");
-
-  // 箭头标记（auto-start-reverse：同一标记同时用于起点/终点，双向边双箭头）
-  const defs = document.createElementNS(SVG, "defs");
-  for (const [markerId, pathClass] of [
-    ["arrowhead", "arrow-path"],
-    ["arrowhead-hidden", "arrow-path-hidden"],
-  ]) {
-    const marker = document.createElementNS(SVG, "marker");
-    marker.setAttribute("id", markerId);
-    marker.setAttribute("viewBox", "0 0 10 10");
-    marker.setAttribute("refX", "10");
-    marker.setAttribute("refY", "5");
-    marker.setAttribute("markerWidth", "7");
-    marker.setAttribute("markerHeight", "7");
-    marker.setAttribute("orient", "auto-start-reverse");
-    const arrow = document.createElementNS(SVG, "path");
-    arrow.setAttribute("d", "M 0 0 L 10 5 L 0 10 z");
-    arrow.setAttribute("class", pathClass);
-    marker.appendChild(arrow);
-    defs.appendChild(marker);
-  }
-  svg.appendChild(defs);
-
-  // 边：按 (from,to) 分组，同组多条出边用垂直于连线的偏移曲线区分
-  const fromById = new Map(locations.map((l) => [l.id, l]));
-  const byPair = new Map();
-  for (const e of world.exits || []) {
-    const key = `${e.from_id}\u0000${e.to_id}`;
-    if (!byPair.has(key)) {
-      byPair.set(key, []);
-    }
-    byPair.get(key).push(e);
-  }
-  for (const group of byPair.values()) {
-    const from = fromById.get(group[0].from_id);
-    const to = fromById.get(group[0].to_id);
-    if (!from || !to) {
+  // 非收起分身按格分组（一格可能叠多个分身）
+  const avatarByCell = new Map();
+  for (const a of allAvatars) {
+    if (collapsed.has(a.exit.id)) {
       continue;
     }
-    const dx = to.x - from.x;
-    const dy = to.y - from.y;
-    const len = Math.hypot(dx, dy) || 1;
-    const px = -dy / len;
-    const py = dx / len; // 连线方向垂直单位向量
-    const count = group.length;
-    const spacing = 34;
-    group.forEach((e, index) => {
-      const offset = count === 1 ? 0 : (index - (count - 1) / 2) * spacing;
-      const midX = (from.x + to.x) / 2 + px * offset;
-      const midY = (from.y + to.y) / 2 + py * offset;
-      const d = `M ${from.x} ${from.y} Q ${midX} ${midY} ${to.x} ${to.y}`;
-      const hidden = e.reveal_target === false;
-      const double = hasReverse(world.exits, e);
-
-      // 命中层：加宽透明描边便于点击
-      const hit = document.createElementNS(SVG, "path");
-      hit.setAttribute("d", d);
-      hit.classList.add("edge-hit");
-      hit.addEventListener("click", () => openExitForm(e));
-      svg.appendChild(hit);
-
-      const pathEl = document.createElementNS(SVG, "path");
-      pathEl.setAttribute("d", d);
-      if (double) {
-        pathEl.setAttribute(
-          "marker-start",
-          `url(#${hidden ? "arrowhead-hidden" : "arrowhead"})`
-        );
-      }
-      pathEl.setAttribute(
-        "marker-end",
-        `url(#${hidden ? "arrowhead-hidden" : "arrowhead"})`
-      );
-      pathEl.classList.add("edge");
-      if (hidden) {
-        pathEl.classList.add("edge-hidden");
-      }
-      svg.appendChild(pathEl);
-
-      const labelEl = document.createElementNS(SVG, "text");
-      labelEl.setAttribute("x", midX);
-      labelEl.setAttribute("y", midY - 8);
-      labelEl.setAttribute("text-anchor", "middle");
-      labelEl.classList.add("edge-label");
-      if (hidden) {
-        labelEl.classList.add("edge-label-hidden");
-      }
-      labelEl.textContent = e.label;
-      svg.appendChild(labelEl);
-    });
+    const k = cellKey(a.col, a.row);
+    if (!avatarByCell.has(k)) {
+      avatarByCell.set(k, []);
+    }
+    avatarByCell.get(k).push(a);
   }
 
-  // 节点
-  const currentId = world.player ? world.player.location_id : null;
-  const agentId = world.agent ? world.agent.location_id : null;
-  const nodeEls = new Map();
+  // 占用的格：主位 + 非收起分身（决定网格范围）
+  const occupiedCells = new Set();
+  for (const [, cell] of pos) {
+    occupiedCells.add(cellKey(cell[0], cell[1]));
+  }
+  for (const k of avatarByCell.keys()) {
+    occupiedCells.add(k);
+  }
 
-  for (const l of locations) {
-    const g = document.createElementNS(SVG, "g");
-    g.classList.add("node");
-    if (l.id === currentId) {
-      g.classList.add("node-current");
-    } else if (l.id === agentId) {
-      g.classList.add("node-agent");
+  let minCol = 0;
+  let maxCol = 0;
+  let minRow = 0;
+  let maxRow = 0;
+  for (const k of occupiedCells) {
+    const [c, r] = k.split(",").map(Number);
+    minCol = Math.min(minCol, c);
+    maxCol = Math.max(maxCol, c);
+    minRow = Math.min(minRow, r);
+    maxRow = Math.max(maxRow, r);
+  }
+  const nCols = maxCol - minCol + 1;
+  const nRows = maxRow - minRow + 1;
+
+  // 像素换算（含内边距；绝对定位元素相对 padding 盒）
+  const colCx = (gcol) => PAD + gcol * (CELL_W + GAP) + CELL_W / 2;
+  const rowCy = (grow) => PAD + grow * (CELL_H + GAP) + CELL_H / 2;
+  const gapX = (gcol) => PAD + (gcol + 1) * CELL_W + gcol * GAP + GAP / 2;
+  const gapY = (grow) => PAD + (grow + 1) * CELL_H + grow * GAP + GAP / 2;
+
+  const grid = document.createElement("div");
+  grid.className = "edit-grid";
+  grid.style.gridTemplateColumns = `repeat(${nCols}, ${CELL_W}px)`;
+  grid.style.gridTemplateRows = `repeat(${nRows}, ${CELL_H}px)`;
+  grid.style.width = `${nCols * CELL_W + (nCols - 1) * GAP + PAD * 2}px`;
+  grid.style.padding = `${PAD}px`;
+  container.appendChild(grid);
+
+  const cellEls = new Map(); // location_id -> 元素列表（同名联动高亮用）
+  const byId = new Map(world.locations.map((l) => [l.id, l]));
+  const spawn = world.spawn || {};
+
+  // ---------- 主地块格 ----------
+  for (const l of world.locations) {
+    const [col, row] = pos.get(l.id);
+    const cell = document.createElement("div");
+    cell.className = "grid-cell";
+    cell.style.gridColumn = `${col - minCol + 1}`;
+    cell.style.gridRow = `${row - minRow + 1}`;
+
+    const nameEl = document.createElement("div");
+    nameEl.className = "grid-cell-name";
+    nameEl.textContent = l.name;
+    cell.appendChild(nameEl);
+
+    const idEl = document.createElement("div");
+    idEl.className = "grid-cell-id";
+    idEl.textContent = l.id;
+    cell.appendChild(idEl);
+
+    // 出生点徽标
+    if (spawn.agent === l.id || spawn.player === l.id) {
+      const badge = document.createElement("span");
+      badge.className = "spawn-badge";
+      if (spawn.agent === l.id && spawn.player === l.id) {
+        badge.textContent = "出生点";
+      } else if (spawn.agent === l.id) {
+        badge.textContent = "Agent 出生点";
+      } else {
+        badge.textContent = "玩家出生点";
+      }
+      cell.appendChild(badge);
     }
 
-    // 同名分组悬浮联动（编辑视图专用，识别重名地块）
+    // 已收起的出口：折叠成出发地块格内的标签（点击展开）
+    for (const a of allAvatars) {
+      if (!collapsed.has(a.exit.id) || a.exit.from_id !== l.id) {
+        continue;
+      }
+      const target = byId.get(a.targetId);
+      const tag = document.createElement("button");
+      tag.type = "button";
+      tag.className = "collapsed-tag";
+      tag.textContent = `${DIR_CHAR[a.exit.direction] || "→"} ${target ? target.name : a.targetId}`;
+      tag.title = a.exit.label;
+      tag.addEventListener("click", (event) => {
+        event.stopPropagation();
+        collapsed.delete(a.exit.id);
+        onMutate();
+      });
+      cell.appendChild(tag);
+    }
+
+    // 重名地块悬浮全体高亮（识别重名）
     const sameName = world.locations.filter((o) => o.name === l.name);
     const highlight = () => {
       for (const o of sameName) {
-        const el = nodeEls.get(o.id);
-        if (el) {
-          el.classList.add("node-highlight");
+        for (const el of cellEls.get(o.id) || []) {
+          el.classList.add("cell-highlight");
         }
       }
     };
     const unhighlight = () => {
       for (const o of sameName) {
-        const el = nodeEls.get(o.id);
-        if (el) {
-          el.classList.remove("node-highlight");
+        for (const el of cellEls.get(o.id) || []) {
+          el.classList.remove("cell-highlight");
         }
       }
     };
-    g.addEventListener("mouseenter", highlight);
-    g.addEventListener("mouseleave", unhighlight);
-    g.addEventListener("click", () => openLocationForm(l));
-    nodeEls.set(l.id, g);
-
-    const circle = document.createElementNS(SVG, "circle");
-    circle.setAttribute("cx", l.x);
-    circle.setAttribute("cy", l.y);
-    circle.setAttribute("r", 26);
-    g.appendChild(circle);
-
-    const name = document.createElementNS(SVG, "text");
-    name.setAttribute("x", l.x);
-    name.setAttribute("y", l.y - 36);
-    name.setAttribute("text-anchor", "middle");
-    name.classList.add("node-name");
-    name.textContent = l.name;
-    g.appendChild(name);
-
-    const idText = document.createElementNS(SVG, "text");
-    idText.setAttribute("x", l.x);
-    idText.setAttribute("y", l.y + 4);
-    idText.setAttribute("text-anchor", "middle");
-    idText.classList.add("node-id");
-    idText.textContent = l.id;
-    g.appendChild(idText);
-
-    if (l.id === agentId && l.id !== currentId) {
-      const badge = document.createElementNS(SVG, "text");
-      badge.setAttribute("x", l.x);
-      badge.setAttribute("y", l.y + 44);
-      badge.setAttribute("text-anchor", "middle");
-      badge.classList.add("agent-badge");
-      badge.textContent = "Agent";
-      g.appendChild(badge);
+    cell.addEventListener("mouseenter", highlight);
+    cell.addEventListener("mouseleave", unhighlight);
+    cell.addEventListener("click", () => openLocationForm(l));
+    if (!cellEls.has(l.id)) {
+      cellEls.set(l.id, []);
     }
-    svg.appendChild(g);
+    cellEls.get(l.id).push(cell);
+    grid.appendChild(cell);
   }
 
-  container.appendChild(svg);
+  // ---------- 分身格 ----------
+  for (const [k, avatars] of avatarByCell) {
+    const [col, row] = k.split(",").map(Number);
+    const cell = document.createElement("div");
+    cell.className = "grid-cell grid-cell-avatar";
+    cell.style.gridColumn = `${col - minCol + 1}`;
+    cell.style.gridRow = `${row - minRow + 1}`;
+    for (const a of avatars) {
+      const target = byId.get(a.targetId);
+      const rowEl = document.createElement("div");
+      rowEl.className = "avatar-row";
+      const nameEl = document.createElement("span");
+      nameEl.className = "avatar-name";
+      nameEl.textContent = target ? target.name : a.targetId;
+      const badge = document.createElement("span");
+      badge.className = "avatar-badge";
+      badge.textContent = "分身";
+      const fold = document.createElement("button");
+      fold.type = "button";
+      fold.className = "avatar-fold";
+      fold.textContent = "收起";
+      fold.addEventListener("click", (event) => {
+        event.stopPropagation();
+        collapsed.add(a.exit.id);
+        onMutate();
+      });
+      rowEl.appendChild(nameEl);
+      rowEl.appendChild(badge);
+      rowEl.appendChild(fold);
+      rowEl.addEventListener("click", () => openExitForm(a.exit));
+      cell.appendChild(rowEl);
+    }
+    grid.appendChild(cell);
+  }
+
+  // ---------- 间隙连接标签：每条出口画在 from→目标格 的间隙中点（按间隙分组堆叠） ----------
+  const gapGroups = new Map();
+  for (const e of world.exits || []) {
+    if (collapsed.has(e.id)) {
+      continue;
+    }
+    const from = pos.get(e.from_id);
+    const target = pos.get(e.to_id);
+    if (!from || !target) {
+      continue;
+    }
+    const [dc, dr] = DIR_OFFSETS[e.direction] || DIR_OFFSETS.up;
+    const tc = from[0] + dc;
+    const tr = from[1] + dr;
+    let gapKey;
+    let gRow;
+    let gCol;
+    if (tc > from[0]) {
+      gapKey = `h:${from[1]}:${from[0]}`;
+      gRow = from[1];
+      gCol = from[0];
+    } else if (tc < from[0]) {
+      gapKey = `h:${from[1]}:${tc}`;
+      gRow = from[1];
+      gCol = tc;
+    } else if (tr < from[1]) {
+      gapKey = `v:${tr}:${from[0]}`;
+      gRow = tr;
+      gCol = from[0];
+    } else {
+      gapKey = `v:${from[1]}:${from[0]}`;
+      gRow = from[1];
+      gCol = from[0];
+    }
+    if (!gapGroups.has(gapKey)) {
+      gapGroups.set(gapKey, []);
+    }
+    gapGroups.get(gapKey).push({ exit: e, gRow, gCol });
+  }
+
+  for (const group of gapGroups.values()) {
+    const { gRow, gCol } = group[0];
+    const horizontal =
+      group[0].exit.direction === "left" || group[0].exit.direction === "right";
+    const n = group.length;
+    group.forEach((item, i) => {
+      const { exit } = item;
+      const chip = document.createElement("div");
+      chip.className =
+        exit.reveal_target === false ? "edge-chip edge-chip-hidden" : "edge-chip";
+      chip.textContent = `${DIR_CHAR[exit.direction] || "→"} ${exit.label}`;
+      chip.title = exit.label;
+      chip.style.transform = "translate(-50%, -50%)";
+      if (horizontal) {
+        chip.style.left = `${gapX(gCol - minCol)}px`;
+        chip.style.top = `${rowCy(gRow - minRow) + (i - (n - 1) / 2) * 26}px`;
+      } else {
+        chip.style.left = `${colCx(gCol - minCol) + (i - (n - 1) / 2) * 168}px`;
+        chip.style.top = `${gapY(gRow - minRow)}px`;
+      }
+      grid.appendChild(chip);
+    });
+  }
+
+  syncAvatarToggleLabel(world, allAvatars);
+}
+
+function syncAvatarToggleLabel(world, allAvatars) {
+  const btn = $("#btn-toggle-avatars");
+  if (!btn) {
+    return;
+  }
+  const ids = allAvatars.map((a) => a.exit.id);
+  const allCollapsed =
+    ids.length > 0 && ids.every((id) => state.collapsedExits.has(id));
+  btn.textContent = allCollapsed ? "展开全部分身" : "收起全部分身";
+}
+
+function toggleAllAvatars() {
+  const world = state.world;
+  if (!world) {
+    return;
+  }
+  const all = computeAvatars(world, computePositions(world.locations)).map(
+    (a) => a.exit.id
+  );
+  const allCollapsed =
+    all.length > 0 && all.every((id) => state.collapsedExits.has(id));
+  if (allCollapsed) {
+    for (const id of all) {
+      state.collapsedExits.delete(id);
+    }
+  } else {
+    for (const id of all) {
+      state.collapsedExits.add(id);
+    }
+  }
+  onMutate();
 }
 
 function openLocationForm(loc) {

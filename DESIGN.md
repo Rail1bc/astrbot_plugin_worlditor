@@ -31,7 +31,7 @@ WorldStore（world/store.py，SQLite aiosqlite + WAL，启动全量载入内存�
 
 ## 数据模型（world/model.py）
 
-- `Location(id, name, description, layout_x=None, layout_y=None)` — `layout` 仅可视化提示，与拓扑无关。
+- `Location(id, name, description, layout_x=None, layout_y=None)` — `layout` 为编辑表格的整数网格坐标（x=列、y=行，决定地块主位），仅可视化提示、与拓扑无关（可达性只由出边定义）；未设坐标时编辑器确定性兜底到首个空闲格。
 - `Exit(id, from_id, to_id, label, reveal_target=True, direction="up")` — 有向；同 `(from_id, to_id)` 允许多条不同 label 的出边；`reveal_target=False` 时场景隐藏目标名（显示 `???`）；`direction` 为玩家视图十字槽位方向（`up/right/down/left`），编辑器保证同一出发地块的出边方向互异（数据层不强制）。
 - `Player(player_id, name, location_id, is_agent=False, last_active_ts=0.0, user_id=None)` — 人类（v1）仅内存；agent 固定 `player_id="agent"` 位置持久化；`user_id` 为 v2 用户系统预留。
 
@@ -65,7 +65,7 @@ WorldStore（world/store.py，SQLite aiosqlite + WAL，启动全量载入内存�
 
 | 表 | 说明 |
 |---|---|
-| `locations(id TEXT PK, name, description, layout_json)` | 地块；`layout_json` 存 `{"x","y"}` 坐标提示 |
+| `locations(id TEXT PK, name, description, layout_json)` | 地块；`layout_json` 存 `{"x","y"}` 整数网格坐标（编辑表格主位） |
 | `exits(id TEXT PK, from_id, to_id, label, reveal_target, direction)` | 有向出口；from_id/to_id 外键 locations，同 (from,to) 允许多行；direction 为十字槽位方向 |
 | `world_meta(key TEXT PK, value)` | `schema_version` + `agent_location` |
 
@@ -85,7 +85,7 @@ WorldStore（world/store.py，SQLite aiosqlite + WAL，启动全量载入内存�
 
 | 端点 | 说明 |
 |---|---|
-| `GET /world/state?player_id=...` | 全量地图（locations + exits）+ 该玩家场景 + agent 位置 |
+| `GET /world/state?player_id=...` | 全量地图（locations + exits）+ 该玩家场景 + agent 位置 + 出生点（agent/玩家注册起始，默认播种位、被删则回落第一个地块） |
 | `POST /world/player/register` `{name?}` | 随机 player_id（uuid4 前 8 位）、默认名 `旅行者-XXXX`、放起始地块；返回 `{player_id, location_id, location_name}` |
 | `POST /world/move` `{player_id, exit_id}` | 按出口移动并返回新场景；非法出边 → 400 |
 | `POST /world/player/deregister` `{player_id}` | 页面 unload 尽力注销（超时清理兜底） |
@@ -103,7 +103,7 @@ handler 只做类型校验（dict、字符串、layout 数字排除 bool、revea
 定位：供管理员在 dashboard 内验证世界与移动逻辑，非正式用户入口（正式入口为 v2 独立网页）。单页内分段控件切换两种视图（`app.js` / `shared.js` / `edit-view.js` / `edit-forms.js` / `play-view.js`，纯 ES module 无构建）。
 
 - 无本地 player_id → 先注册 → `GET /world/state` → 渲染。
-- **编辑模式（上帝视角）**：全图 SVG（`layout` 坐标优先、未设坐标用确定性兜底布局、同 (from,to) 多条出边偏移曲线）；地块永远真名、不存在 `???`；边画方向信息（单向箭头 / 双向双箭头）；重名地块悬浮全体高亮（识别重名）；点击节点 / 边 → 编辑表单（地块：id/name/description/layout；出口：from/to/label/「隐藏目的地」开关/direction 四选/删除+确认），提交后 re-fetch 世界状态重绘。
+- **编辑模式（上帝视角，网格表格）**：地块按其整数网格坐标（`layout`：列/行）落在 CSS grid 表格的主格，**所有连接必须相邻**——出口方向决定目标相邻格，目标主位不在该格时在该格显示目标的地块分身（虚线框，可叠多行）；反向边用相反方向（A 右是 B ⇔ B 左是 A），捷径 / 环路这类特殊关系以分身呈现（如 悬崖-单向可达-悬崖底部：底部→悬崖 用反向方向、悬崖以分身出现在底部的相邻格）；分身可收起（折叠成出发地块格内的标签，点击展开；工具栏一键全收/全展）；格上显示出生点徽标（agent / 玩家注册起始）；地块永远真名、不存在 `???`；格间空隙内画方向标签（↑↓←→ + 出口 label，隐藏目标仍显示真名）；重名地块悬浮全体高亮（识别重名）；点击主格 → 地块表单（id/name/description/列/行），点击分身 → 出口表单（from/to/label/「隐藏目的地」开关/direction 四选/删除+确认），新建出口方向自动推荐（① 反向边存在 → 其反方向；② 目标相邻 → 相对位置推导；③ 否则首个空闲方向），提交后 re-fetch 世界状态重绘。
 - **玩家模式**：地图 div 中间是**只含地块名称的小块**（无说明文本 / 玩家 id），有出边连接的 1 跳目标按 `direction` 放上/右/下/左——**无连接的槽位不可见**；所有边一视同仁（无箭头简单连线，不查反向边、不画方向）；**无回环**（自环出口照常占槽位、目标格即当前地块）；隐藏目标显示 `???`（名称只取 scene 的 `target_name`，绝不全图查名）；当前地块说明文本渲染在与地图 div **平级的独立信息 div**（实体系统后续版本接入）；违规地图（出度 >4 或同方向冲突）前 4 槽 + 「+N」折叠 → 展开全部出口列表（保留 exit_id）可收回；点击目标格按 exit_id 移动。
 - 无 SSE；sandbox iframe 无 localStorage / 原生 alert → 自绘 modal + textContent 转义 + 模块级 playerId（刷新重新注册）。
 
@@ -132,7 +132,7 @@ handler 只做类型校验（dict、字符串、layout 数字排除 bool、revea
 
 ### 地图可视化编辑
 
-有向图编辑：增删地块、增删带标签有向出边、设置 `reveal_target` / 布局坐标。v0.2 已在插件调试页落地单页双模式的编辑能力（全图可视化 + 表单编辑、方向槽位、重名高亮）；v2 独立网页将作为正式的可视化编辑入口。
+有向图编辑：增删地块、增删带标签有向出边、设置 `reveal_target` / 网格坐标。v0.2 已在插件调试页落地单页双模式的编辑能力（网格表格 + 表单编辑、方向自动推荐、地块分身可收起、重名高亮）；v2 独立网页将作为正式的可视化编辑入口。
 
 ### 人与 agent 实时互见（SSE 事件流）
 
