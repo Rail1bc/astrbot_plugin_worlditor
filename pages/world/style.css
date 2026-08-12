@@ -189,8 +189,15 @@ body {
 #graph {
   flex: 1;
   min-width: 0;
-  overflow: auto;
+  /* 隐藏横竖滚动条：地图以右键拖动 / 滚轮平移 */
+  overflow: hidden;
   position: relative;
+  cursor: grab;
+  touch-action: none;
+}
+
+#graph.panning {
+  cursor: grabbing;
 }
 
 /* 缩放控件（编辑工具条右侧） */
@@ -316,8 +323,8 @@ body {
   display: flex;
 }
 
-/* 可滚动画布：绝对定位像素渲染（edit-view.js），外层 #graph 滚动平移、Ctrl/滚轮缩放。
-   轨道尺寸（CELL / CONN / GAP / PITCH）与 edit-view.js 常量一致。 */
+/* 地图画布：绝对定位像素渲染（edit-view.js），外层 #graph 右键拖动 / 滚轮平移、
+   Ctrl/滚轮缩放。尺寸 = 地图固定边界（内容外延 EDGE 格），缩放由 transform: scale 完成。 */
 .world-canvas {
   position: absolute;
   left: 0;
@@ -325,14 +332,15 @@ body {
   transform-origin: 0 0;
 }
 
-/* 网格背景：交替轨道边界线（地块轨 / 连接轨），缩放时保持清晰 */
+/* 编辑模式网格背景：地块周期边线，缩放时保持清晰；不拦截点击（落到画布） */
 .world-grid {
   position: absolute;
   left: 0;
   top: 0;
+  pointer-events: none;
 }
 
-#view-edit.mode-edit .world-grid {
+#view-edit.mode-edit .world-canvas {
   cursor: crosshair;
 }
 
@@ -412,89 +420,142 @@ body {
   white-space: nowrap;
 }
 
-/* 连接块：长方形（尺寸由轨道决定），内部画方向线条；空块 = 不连接 */
-.conn-block {
+/* 连接层：地块间隙中的 SVG 连线；空区域不拦截点击（pointer-events: none 透传） */
+.conn-layer {
   position: absolute;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg);
-  overflow: hidden;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+
+/* 单条连接：a→b 单向带箭头 / a↔b 双向无箭头 / a→b′ 非常规带箭头虚线 + 末端标记格 */
+.conn-line {
+  pointer-events: visiblePainted; /* 仅线条与箭头填充区可点，包围盒不拦截 */
   cursor: pointer;
 }
 
-.conn-block:hover {
-  border-color: var(--accent);
-}
-
-.conn-block-empty {
-  border-style: dashed;
-  background: transparent;
-  cursor: default; /* 空连接块不可点击：不提示可交互 */
-}
-
-.conn-block-empty:hover {
-  border-color: var(--border);
-}
-
-.conn-block.selected {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent);
-}
-
-/* 方向条：单向箭头 / 双向双箭头；特殊连接（目的地自选）为虚线强调条 */
-.conn-bar {
-  display: block;
-  flex: 0 0 auto;
-  cursor: pointer;
-}
-
-.conn-bar line {
+.conn-line line {
   stroke: var(--edge);
   stroke-width: 3;
   stroke-linecap: round;
 }
 
-.conn-bar polygon {
+.conn-line polygon {
   fill: var(--edge);
 }
 
-.conn-bar.selected line,
-.conn-bar.selected polygon {
-  stroke: var(--current);
-  fill: var(--current);
-}
-
-.conn-bar.conn-special line {
+.conn-line:hover line,
+.conn-line:hover polygon {
   stroke: var(--accent);
-  stroke-dasharray: 4 3;
-}
-
-.conn-bar.conn-special polygon {
   fill: var(--accent);
 }
 
-.conn-bar.conn-special:hover line,
-.conn-bar.conn-special:hover polygon {
+/* 非常规连接（目的地非方向相邻）：虚线强调 + 末端小标记格 */
+.conn-line.conn-special line {
+  stroke: var(--accent);
+  stroke-dasharray: 5 3;
+}
+
+.conn-line.conn-special polygon {
+  fill: var(--accent);
+}
+
+.spec-marker {
+  stroke: var(--accent);
+  stroke-width: 2;
+  fill: color-mix(in srgb, var(--accent) 18%, var(--panel));
+}
+
+.conn-line.conn-special:hover line,
+.conn-line.conn-special:hover polygon,
+.conn-line.conn-special:hover .spec-marker {
   stroke: var(--danger);
   fill: var(--danger);
 }
 
-/* 占位小格（偶数-偶数轨道）：无意义的排版占位，斜纹底纹 + 虚线边框表示「无效、不可交互」 */
-.ph-cell {
+/* 选中态（选中出口 / 选中整个间隙）：琥珀色高亮 */
+.conn-line.selected line,
+.conn-line.selected polygon {
+  stroke: var(--current);
+  fill: var(--current);
+}
+
+.conn-line.selected .spec-marker {
+  stroke: var(--current);
+  fill: color-mix(in srgb, var(--current) 18%, var(--panel));
+}
+
+/* ---------- 全图缩略图（可收起 / 可拖动，显示全图 + 当前视口） ---------- */
+.minimap {
   position: absolute;
-  border: 1px dashed color-mix(in srgb, var(--edge) 55%, transparent);
-  border-radius: 6px;
-  background: repeating-linear-gradient(
-    45deg,
-    transparent 0 4px,
-    color-mix(in srgb, var(--edge) 13%, transparent) 4px 6px
-  );
-  opacity: 0.45;
+  right: 14px;
+  bottom: 14px;
+  z-index: 10;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  user-select: none;
+  overflow: hidden;
+}
+
+.minimap-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 8px;
+  cursor: move;
+  border-bottom: 1px solid var(--border);
+}
+
+.minimap.collapsed .minimap-head {
+  border-bottom: 0;
+}
+
+.minimap-title {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.minimap-toggle {
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 0 4px;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.minimap-body {
+  padding: 6px;
+  overflow: hidden;
+}
+
+.minimap.collapsed .minimap-body {
+  display: none;
+}
+
+.minimap-svg {
+  display: block;
+}
+
+.minimap-bg {
+  fill: color-mix(in srgb, var(--bg) 65%, transparent);
+  stroke: var(--border);
+  stroke-width: 2;
+}
+
+.minimap-loc {
+  fill: var(--accent);
+  opacity: 0.85;
+}
+
+.minimap-view {
+  fill: color-mix(in srgb, var(--accent) 15%, transparent);
+  stroke: var(--accent);
+  stroke-width: 3;
 }
 
 /* 玩家视图：地图 div 动态填充剩余空间；详情列内部滚动 */
