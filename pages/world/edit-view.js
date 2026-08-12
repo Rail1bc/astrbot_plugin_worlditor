@@ -470,7 +470,7 @@ function drawLine(svg, line, isH, cx, cy, frac, blockSel, gapKey) {
     const gx1 = cx + CELL;
     const gx2 = cx + CELL + GAP;
     const mid = gx1 + GAP / 2;
-    if (line.kind === "bi" || line.side === "r") {
+    if (line.kind === "bi" || (line.kind === "one" && line.side === "r")) {
       x1 = gx1;
       y1 = y;
       x2 = gx2;
@@ -508,7 +508,7 @@ function drawLine(svg, line, isH, cx, cy, frac, blockSel, gapKey) {
     const gy1 = cy + CELL;
     const gy2 = cy + CELL + GAP;
     const mid = gy1 + GAP / 2;
-    if (line.kind === "bi" || line.side === "d") {
+    if (line.kind === "bi" || (line.kind === "one" && line.side === "d")) {
       x1 = x;
       y1 = gy1;
       x2 = x;
