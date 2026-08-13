@@ -127,12 +127,12 @@ handler 只做类型校验（dict、字符串、layout 数字排除 bool、revea
 |---|---|
 | 多地图范围 | 单地图 + 引入 map_id（结构就绪，不做多世界切换） |
 | 连接目标跨图 | 目标带 `map_id`（空 = 当前地图）；单图阶段恒为空 |
-| 隐藏目标 | 保留，每槽一个 `reveal_target` 布尔；多目标时**只展示首个目标名**（隐藏则 `???`） |
-| 目标语义 | 列表有序：**首个 = 期望路径**（展示名据此显示）；其余 = 意外路径（加权随机小概率，如「脚滑跌下悬崖」「没看路掉进井盖」） |
+| 隐藏目标 | 保留，挂在**路径级** `reveal_target`（每路径一个布尔）；只展示该路径主目标名（隐藏则 `???`），意外目标名永不展示 |
+| 目标语义 | 路径级：每条路径 `targets` 有序（**首个 = 主目标**，展示名据此显示；其余 = 意外路径加权随机，如「脚滑跌下悬崖」「没看路掉进井盖」）；同方向允许多条**平行可选路径**（恢复旧模型「同方向多出口 / +N」能力，总出度不限） |
 | 时间语义 | 每日循环钟点窗口（可跨午夜）+ 地图级时区（默认服务器本地） |
 | 地块移动 | 坐标只读，专门「移动地块」工具：原子重写指向旧坐标的所有连接目标与该地块上玩家位置；目标格被占则拒绝 |
 | 模板 | 复制预设（非继承），应用到空地块 |
-| 移动接口 | 按方向 + 加权抽目标（不再按 exit_id） |
+| 移动接口 | 按方向 + 路径选择 + 路径内加权抽目标（不再按 exit_id；路径以索引标识，场景内有效） |
 
 ### 目标数据模型（world/model.py）
 
@@ -173,13 +173,21 @@ class Target:
 
 
 @dataclass
+class ConnectionPath:
+    """一条路径（可选出口）：label 为语义文本，targets 有序（首个=主目标，其余=意外）。"""
+
+    label: TextSchedule | None = None  # 路径文本（时段加权，复用 TextSchedule）
+    reveal_target: bool = True
+    targets: list[Target] = field(default_factory=list)
+    # 默认 = 单路径，targets = [方向偏移 1 的相邻地块]（up=行-1 / down=行+1 / left=列-1 / right=列+1）
+
+
+@dataclass
 class ConnectionSlot:
     direction: str    # up/right/down/left，固定不可修改
     enabled: bool = False
-    label: TextSchedule | None = None  # 出口标签（时段加权，复用 TextSchedule）
-    reveal_target: bool = True
-    targets: list[Target] = field(default_factory=list)
-    # 默认目标 = 当前地块坐标向 direction 偏移 1（up=行-1 / down=行+1 / left=列-1 / right=列+1）
+    paths: list[ConnectionPath] = field(default_factory=list)
+    # 平行路径 = paths 多条（玩家可选）；总出度不限（4 方向 × 多路径 × 多目标）
 
 
 @dataclass
@@ -204,13 +212,13 @@ class WorldMap:
 
 ### 语义细节
 
-- **目标有序性**：槽位 `targets` 列表有序——**首个目标 = 期望路径**（`world_look` / 玩家视图只显示首个目标名，隐藏则 `???`），其余目标 = 意外路径（加权随机，仅在移动结算时可能命中）。重排目标 = 改主路径（UI 需排序控件 + 权重可视化）。
-- **死引用规则**：启用槽位中，**首个目标不可解析**（目标地图不存在 / 目标地块不存在 / 坐标越界）→ 整槽视为禁用；**其余目标**不可解析 → 静默跳过（意外目标不存在就当没发生）。UI 需区分「显式禁用」与「死引用」（启用但无有效目标 → 标红/虚线提示）。
-- **隐藏目标**：`reveal_target` 每槽一个布尔，为假时首个目标名显示 `???`；不展示目标列表中的其余目标名。
-- **移动结算**：`move(player, direction, target=None)` → 解析当前地块该方向槽位，启用则从 `targets` 按权重抽取目标（显式传入 `target` 坐标则直取）；玩家位置 = 目标 `(map_id, row, col)`（跨图移动会切图）；agent 位置写回。
+- **路径与目标有序性**：槽位 `paths` 列表 = 平行可选路径（`world_look` / 玩家视图逐一列出，玩家选择走哪条）；每条路径 `targets` 有序——**首个目标 = 主目标**（展示名据此显示，隐藏则 `???`），其余目标 = 意外路径（加权随机，仅在沿该路径移动时可能命中）。重排目标 = 改主路径；重排路径 = 改可选项顺序（UI 需排序控件 + 权重可视化）。
+- **死引用规则**：**路径级**判定——某路径的主目标不可解析（目标地图不存在 / 目标地块不存在 / 坐标越界）→ 该路径视为死（不展示 / 不可选）；路径内意外目标不可解析 → 静默跳过（意外不存在就当没发生）；槽位启用但全部路径死 → 视为禁用。UI 需区分「显式禁用」与「死引用」（启用但无有效路径 → 标红/虚线提示）。
+- **隐藏目标**：`reveal_target` 挂在**路径级**，为假时该路径主目标名显示 `???`；路径内意外目标名永不展示。
+- **移动结算**：`move(player, direction, path=None, target=None)` → 解析当前地块该方向槽位；多条路径时 `path` 指定索引（场景内有效，`world_look` 每次重列），单条路径可省略；在选中路径内从 `targets` 按权重抽取目标（显式传入 `target` 坐标则直取）；玩家位置 = 目标 `(map_id, row, col)`（跨图移动会切图）；agent 位置写回。
 - **地块移动**：坐标只读（表单不可改）；「移动地块」原子操作 = 改该地块 `(row,col)` + 重写全图指向旧坐标的所有连接目标 + 重写该地块上玩家位置；目标格被占 → 拒绝（不做交换）。
-- **模板**：复制预设（CRUD + 应用到空地块），复制 name / description / connections 四槽（label / reveal_target / enabled / targets）。目标复制策略：**同图目标存方向相对偏移**（放置时按地块位置平移）；**跨图目标存绝对 `map_id+坐标`** 原样复制。
-- **出度结构上限 = 4**：每地块固定 4 槽，方向互异升格为结构约束。同方向多出口的「平行可选路径」不再可表达，统一为「主路径 + 意外路径」加权模型（语义变化，`world_look` / `world_move` 措辞随之更新）。
+- **模板**：复制预设（CRUD + 应用到空地块），复制 name / description / connections 四槽（含平行路径列表）。目标复制策略：**同图目标存方向相对偏移**（放置时按地块位置平移）；**跨图目标存绝对 `map_id+坐标`** 原样复制。
+- **出度不再受限**：方向槽固定 4 个（方向互异升格为结构约束），但同方向允许多条平行路径、路径内多目标——总出度不限，恢复旧模型「同方向多出口 / +N」的可选路径能力（以「方向 + 路径索引」选择，对应旧 exit_id）。
 
 ### 持久化与迁移（world/store.py）
 
@@ -221,22 +229,22 @@ class WorldMap:
 | `templates(id TEXT PK, name, data_json)` | 地块模板（复制预设） |
 | `world_meta(key TEXT PK, value)` | `schema_version` + agent 位置 `(map_id,row,col)` |
 
-v2 → v3 迁移：建 `maps` 并插入默认地图；`locations` 的 layout 坐标 → `(row,col)`（无坐标 → firstFreeCell 兜底）；`exits` → 对应方向槽位（`direction` → 槽，`to_id` → 目标坐标，`reveal_target` 保留）；agent 位置改写。种子世界（小镇 + 迷雾区）按新模型重建——多边同目标 → 多目标加权，隐藏目标 / 环路表达保留。
+v2 → v3 迁移：建 `maps` 并插入默认地图；`locations` 的 layout 坐标 → `(row,col)`（无坐标 → firstFreeCell 兜底）；`exits` → 对应方向槽位的路径（`direction` → 槽，同一方向多条出口 → 多条平行路径，`to_id` → 主目标坐标，`reveal_target` 保留，label → 路径 label）；agent 位置改写。种子世界（小镇 + 迷雾区）按新模型重建——多边同目标 → 平行路径 / 多目标加权，隐藏目标 / 环路表达保留。
 
 ### 接口与工具变化
 
 | 变化 | 说明 |
 |---|---|
 | `GET /world/state` | 返回地图信息 + 全量地块（含连接槽位）；玩家位置为 `(map_id,row,col)` |
-| `POST /world/move` `{player_id, direction, target?}` | 按方向移动（不再用 exit_id）；`target` 可选显式指定坐标 |
+| `POST /world/move` `{player_id, direction, path?, target?}` | 按方向移动（不再用 exit_id）；`path` 为路径索引（多条平行路径时指定），`target` 可选显式指定坐标 |
 | `POST /world/location/create` `{row, col, name, description?, template_id?}` | 新建（可用模板）；重复坐标报错 |
 | `POST /world/location/update` `{row, col, name?, description?}` | 坐标不可改 |
 | `POST /world/location/move` `{row, col, to_row, to_col}` | 移动工具（原子重写引用） |
 | `POST /world/location/delete` `{row, col}` | 级联清空指向它的目标；拒绝删除有玩家占据的地块 |
-| `POST /world/connection/update` `{row, col, direction, enabled?, label?, reveal_target?, targets?}` | 编辑连接槽位 |
+| `POST /world/connection/update` `{row, col, direction, enabled?, paths?}` | 编辑连接槽位（`paths` = 平行路径列表，每条含 label / reveal_target / targets） |
 | `POST /world/template/{create,update,delete,apply}` | 模板 CRUD + 应用到空地块 |
-| `world_look` | 4 方向槽位列表，label 取时段文本，目标只显示首个目标名（或 `???`） |
-| `world_move(direction)` | 按方向移动 |
+| `world_look` | 4 方向槽位，每条平行路径单独列出（label 取时段文本 + 主目标名或 `???`） |
+| `world_move(direction, path?)` | 按方向移动（多条平行路径时指定索引） |
 
 ## 后续计划
 
