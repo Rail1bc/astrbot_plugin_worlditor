@@ -2,12 +2,12 @@
 
 ## 定位
 
-一个可以无限生长的世界：图结构为底座，实体与交互为核心内容，AI 与人都能进入。
+一个可以无限生长的世界：网格为底座，实体与交互为核心内容，AI 与人都能进入。
 
-- **世界 = 有向图**：地块（Location）为节点，带标签的出口（Exit）为有向边。`a→b` 可达**不蕴含** `b→a`；无空间相邻，只有出边构成"相邻/可达"。
+- **世界 = 网格 + 4 方向连接**：地块（Location）以 (map_id, 行, 列) 为身份；连接内嵌于地块的固定 4 方向槽位，每槽多条平行路径。`a→b` 可达**不蕴含** `b→a`；隐藏目标 / 环路 / 平行路径与意外目标的复杂度由路径结构承载。
 - **实体与交互是内容**（长期愿景）：实体横跨人物、生物与非生物——建筑、路障，乃至非现实物品；交互方式可无限扩展，交互总有新花样。
 - **引擎协议无关**：动作层被 LLM 工具 / 插件页 API / 未来世界 HTTP API 共用，为 MCP 封装预留。
-- **v1 现状**：基础有向图地图 + 移动；人类玩家为隐形实体（仅内存），agent 有 `world_look` / `world_move` 工具且位置跨对话持久化；框架内置插件页仅作调试。
+- **v3 现状**：网格地图 + 4 方向槽位连接（平行路径 / 多目标加权 / 分时段文本 / 模板）；人类玩家为隐形实体（仅内存），agent 有 `world_look` / `world_move` 工具且位置跨对话持久化；框架内置插件页仅作调试。
 
 ## 架构
 
@@ -29,55 +29,57 @@ WorldStore（world/store.py，SQLite aiosqlite + WAL，启动全量载入内存�
 | `main.py` | Star 装配：引擎 + 路由注册 + LLM 工具 |
 | `tests/` | 引擎 / API 单测 |
 
-## 数据模型（world/model.py，v2 现状）
+## 数据模型（world/v3model.py，v3 现状）
 
-- `Location(id, name, description, layout_x=None, layout_y=None)` — `layout` 为编辑表格的整数网格坐标（x=列、y=行，决定地块主位），仅可视化提示、与拓扑无关（可达性只由出边定义）；未设坐标时编辑器确定性兜底到首个空闲格。
-- `Exit(id, from_id, to_id, label, reveal_target=True, direction="up")` — 有向；同 `(from_id, to_id)` 允许多条不同 label 的出边；`reveal_target=False` 时场景隐藏目标名（显示 `???`）；`direction` 为玩家视图十字槽位方向（`up/right/down/left`），编辑器保证同一出发地块的出边方向互异（数据层不强制）。
-- `Player(player_id, name, location_id, is_agent=False, last_active_ts=0.0, user_id=None)` — 人类（v1）仅内存；agent 固定 `player_id="agent"` 位置持久化；`user_id` 为 v2 用户系统预留。
+v2 模型（id 关联的有向图 Location/Exit）已删除，直接替换为 v3：**地块身份 = (map_id, 行, 列)**；连接内嵌于地块的**固定 4 方向槽位**（`ConnectionSlot`），每槽多条**平行路径**（`ConnectionPath`：分时段加权 label + `reveal_target` + `targets` 有序列表，首个 = 主目标、其余 = 意外加权目标）；文本用 **TextSchedule**（分时段加权，描述 / label / 地图描述复用）；**地块模板**为复制预设。完整模型定义与语义见下文「数据模型 v3（2026-08-13 已实施）」。
 
-"迷路"效果由图本身实现：多边同目标、隐藏目标、环路。**约束分层**：数据层不设出度限制（合法 = 结构允许），规范由可视化编辑器保证，视图层以「+N」折叠兜底违规地图。
+- `Player(player_id, name, map_id, row, col, is_agent=False, last_active_ts=0.0, user_id=None)` — 人类（v1）仅内存；agent 固定 `player_id="agent"` 位置持久化；`user_id` 为 v2 用户系统预留。
+- `SceneView`（场景快照）：所在地块 + 已解析描述 + 可用路径列表（每条 = 方向 + 槽内路径索引 + 时段文本 label + 主目标名或 `???`；死引用已剔除）。
+
+"迷路"效果由模型本身实现：平行路径 / 多目标加权（意外事件）/ 隐藏目标 / 环路。**约束分层**：方向槽固定 4 个（方向互异升格为结构约束），但同方向允许多条平行路径、路径内多目标——总出度不限（4 × 多路径 × 多目标），规范由可视化编辑器保证。
 
 ## 引擎动作（world/engine.py，协议无关）
 
-全部变更在实例 `asyncio.Lock` 内；读路径走内存快照、免锁。
+全部变更在实例 `asyncio.Lock` 内；读路径走内存快照、免锁。时钟 / PRNG 注入（`WorldEngine(store, clock=None, rand=None)`），保证测试确定性。
 
-- `await engine.describe_scene(player_id) -> SceneView | None`
-- `await engine.move(player_id, exit_id) -> SceneView` — 校验顺序：玩家存在 → 出口存在 → 出口属于当前地块 → 移动 → agent 写回 SQLite；失败抛 `WorldError`（消息可直接展示）。
-- `await engine.register_player(player_id, name=None, *, is_agent=False, user_id=None) -> Location`（幂等）
+- `await engine.describe_scene(player_id) -> SceneView | None` — 时间感知描述（TextSchedule 按时段 + 权重解析）+ 4 方向槽位可用路径（死引用剔除、只显示主目标名或 `???`）。
+- `await engine.move(player_id, direction, *, path=None, target=None) -> SceneView` — 校验顺序：玩家存在 → 方向合法 → 该方向有可用路径 → 单路径省略 / 多路径必须给 `path` 索引 → 目标抽取（未显式 `target` 时在选中路径 targets 内按权重抽取；显式 `target` 须为路径目标之一）→ 更新位置 → agent 写回 SQLite；失败抛 `WorldError`（消息可直接展示）。
+- `await engine.register_player(player_id, name=None, *, is_agent=False, user_id=None) -> Location`（幂等，放到默认地图出生点）
 - `await engine.deregister_player(player_id) -> bool`（agent 不可注销）
 - `await engine.touch(player_id) -> bool`（刷新活跃时间）
-- 地图编辑（v0.2，全部锁内；`_UNSET = object()` 哨兵区分「参数未提供=不变」与「显式传 None=清空/重置」）：
-  - `await engine.create_location(id, name, description="", *, layout_x=None, layout_y=None) -> Location`
-  - `await engine.update_location(id, *, name=_UNSET, description=_UNSET, layout_x=_UNSET, layout_y=_UNSET) -> Location`
-  - `await engine.delete_location(id) -> None` — 级联删出边；拒绝删除有玩家（含 agent）所在地块
-  - `await engine.create_exit(id, from_id, to_id, label, *, reveal_target=True, direction="up") -> Exit`
-  - `await engine.update_exit(id, *, to_id=_UNSET, label=_UNSET, reveal_target=_UNSET, direction=_UNSET) -> Exit`（from_id 不可变）
-  - `await engine.delete_exit(id) -> None`
-  - 校验（结构合法，不设出度限制）：id/name/label 去空格非空、重复 id 报错、from/to 必须存在、direction 在 `DIRECTIONS` 内、layout 拒绝非数字 / bool / NaN / Inf；自环出口合法
-- 只读：`list_locations()` / `list_all_exits()` / `list_exits(location_id)` / `get_location(id)` / `get_exit(id)` / `get_player(id)` / `list_players()`
+- 地图编辑（全部锁内；`_UNSET = object()` 哨兵区分「参数未提供=不变」与「显式传 None=清空」）：
+  - `await engine.create_location(map_id, row, col, name, *, description=None, template_id=None) -> Location` — 重复坐标报错；`template_id` 给出时以模板为蓝本（显式 `name` 覆盖模板名）
+  - `await engine.update_location(map_id, row, col, *, name=_UNSET, description=_UNSET) -> Location` — **坐标只读**；`description=None` 显式清空
+  - `await engine.delete_location(map_id, row, col) -> None` — 级联：主目标指向被删地块 → 整条路径移除；意外目标 → 仅移除该目标；拒绝删除有玩家（含 agent）占据的地块
+  - `await engine.move_location(map_id, row, col, to_row, to_col) -> Location` — 移动地块：原子重写自身坐标 + 全图指向旧坐标的连接目标（含自环）+ 该地块上玩家位置；目标格被占 → 拒绝（不做交换）
+  - `await engine.update_connection(map_id, row, col, direction, *, enabled=_UNSET, paths=_UNSET) -> Location` — 方向不可改；`paths` 整体替换（每条含 label / reveal_target / targets）
+  - 模板：`create_template(template_id, name, *, map_id, row, col)` / `update_template(template_id, *, name=_UNSET, map_id=_UNSET, row=_UNSET, col=_UNSET)` / `delete_template(template_id)` / `apply_template(template_id, *, map_id, row, col)`
+  - 校验（结构合法，不设出度限制）：坐标整数（排除 bool）/ 合法范围、name 去空格非空、direction 在 `DIRECTIONS` 内；自环（指向自身的目标）合法
+- 只读：`list_maps()` / `get_map(id)` / `list_locations()` / `get_location(map_id, row, col)` / `list_templates()` / `get_template(id)` / `get_player(id)` / `list_players()`
 - 后台任务：`initialize()` 启动、`terminate()` 取消；每 60s 清理超 15 分钟无活动的非 agent 玩家。
 
 `scene_to_text(scene) -> str`：场景渲染为中文文本（LLM 工具注入下一轮 prompt 的形态）。
 
 ## 持久化（world/store.py）
 
-数据库：`data/plugin_data/astrbot_plugin_worlditor/world.db`
+数据库：`data/plugin_data/astrbot_plugin_worlditor/world.db`，schema v3
 
 | 表 | 说明 |
 |---|---|
-| `locations(id TEXT PK, name, description, layout_json)` | 地块；`layout_json` 存 `{"x","y"}` 整数网格坐标（编辑表格主位） |
-| `exits(id TEXT PK, from_id, to_id, label, reveal_target, direction)` | 有向出口；from_id/to_id 外键 locations，同 (from,to) 允许多行；direction 为十字槽位方向 |
-| `world_meta(key TEXT PK, value)` | `schema_version` + `agent_location` |
+| `maps(id TEXT PK, name, description_json, timezone, spawn_row, spawn_col)` | 地图（本次仅 1 行默认地图）；`description_json` / `timezone` 可空 |
+| `locations(map_id TEXT, row INT, col INT, name, description_json, conns_json, PRIMARY KEY(map_id,row,col))` | 地块；`conns_json` 存 4 槽位配置（纯文本 JSON） |
+| `templates(id TEXT PK, name, data_json)` | 地块模板（复制预设） |
+| `world_meta(key TEXT PK, value)` | `schema_version` + agent 位置 `(map_id,row,col)` |
 
-- WAL + `foreign_keys=ON`；启动全量载入内存（读路径快）。
-- `locations` 为空时幂等播种示例小镇（小镇区 + 迷雾区：多边同目标 / 隐藏目标 / 环路），agent 初始在广场。
-- 版本迁移（schema v2）：`_migrate()` 用 `PRAGMA table_info(exits)` 检查 `direction` 列，老库缺列时 `ALTER TABLE exits ADD COLUMN direction TEXT NOT NULL DEFAULT 'up'`。
-- 编辑写操作（`save_location` / `delete_location_with_exits` / `save_exit` / `delete_exit`）遵循 DB 先、内存后的约定，同时维护 `exits_by_from` 索引（空桶删 key）。
+- WAL；启动全量载入内存（读路径快）。
+- `maps` 为空时幂等播种默认地图 + 种子地块（小镇区 + 迷雾区：平行路径 / 多目标加权 / 隐藏目标 / 环路），agent 初始在出生点。
+- **无 v2→v3 迁移**：solo 迭代、未公开，旧库（v2 `locations` / `exits` 表）数据直接丢弃，空库按新模型重建（见「数据模型 v3」一节）。
+- 编辑写操作（`save_location` / `delete_location` / `save_template` / `delete_template` / `save_agent_pos`）遵循 DB 先、内存后的约定，同时维护 `loc_by_pos[(map_id,row,col)]` 与 `templates` 索引。
 
 ## LLM 工具（main.py）
 
-- `world_look` — 当前地块（id/名称/描述）+ 出边列表；隐藏目标显示 `???`。
-- `world_move(exit_id)` — docstring 必须 `exit_id(string): ...`（参数缺类型注解 import 即 ValueError）；校验失败返回中文错误串让 LLM 自纠，不抛异常。
+- `world_look` — 当前地块（名称/描述）+ 4 方向槽位，每条平行路径以 `[方向:路径索引]` 列出（label 取时段文本 + 主目标名）；隐藏目标显示 `???`。
+- `world_move(direction: str, path: int | None = None)` — 按方向移动（多路径时带路径索引）；docstring 参数必须带类型注解（参数缺类型注解 import 即 ValueError）；校验失败返回中文错误串让 LLM 自纠，不抛异常。
 
 ## Web API（api/，插件页）
 
@@ -85,26 +87,29 @@ WorldStore（world/store.py，SQLite aiosqlite + WAL，启动全量载入内存�
 
 | 端点 | 说明 |
 |---|---|
-| `GET /world/state?player_id=...` | 全量地图（locations + exits）+ 该玩家场景 + agent 位置 + 出生点（agent/玩家注册起始，默认播种位、被删则回落第一个地块） |
-| `POST /world/player/register` `{name?}` | 随机 player_id（uuid4 前 8 位）、默认名 `旅行者-XXXX`、放起始地块；返回 `{player_id, location_id, location_name}` |
-| `POST /world/move` `{player_id, exit_id}` | 按出口移动并返回新场景；非法出边 → 400 |
+| `GET /world/state?player_id=...` | 地图信息（`maps`）+ 全量地块（`locations`，含连接槽位）+ `templates` + 该玩家场景 + agent 位置 + 出生点（默认地图 spawn，被删则回落第一张地图） |
+| `POST /world/player/register` `{name?}` | 随机 player_id（uuid4 前 8 位）、默认名 `旅行者-XXXX`、放出生点；返回 `{player_id, map_id, row, col, location_name}` |
+| `POST /world/move` `{player_id, direction, path?, target?}` | 按方向移动（多路径时 `path` 为槽内路径索引；`target` 可选显式指定坐标，须为路径目标之一）并返回新场景；非法方向 / 路径 → 400 |
 | `POST /world/player/deregister` `{player_id}` | 页面 unload 尽力注销（超时清理兜底） |
-| `POST /world/location/create` `{id, name, description?, layout?}` | 新建地块；`layout` 为 `{x, y}` 或 null |
-| `POST /world/location/update` `{id, name?, description?, layout?}` | 更新地块；缺省键不变，`layout: null` = 清空坐标 |
-| `POST /world/location/delete` `{id}` | 删除地块（级联删出边，拒绝删除有玩家占据的地块） |
-| `POST /world/exit/create` `{id, from_id, to_id, label, reveal_target?, direction?}` | 新建出口 |
-| `POST /world/exit/update` `{id, to_id?, label?, reveal_target?, direction?}` | 更新出口（from_id 不可变） |
-| `POST /world/exit/delete` `{id}` | 删除一条出口 |
+| `POST /world/location/create` `{map_id?, row, col, name?, description?, template_id?}` | 新建地块（重复坐标报错；可指定模板）；`description` 为字符串 / 时段对象 / null |
+| `POST /world/location/update` `{map_id?, row, col, name?, description?}` | 更新地块属性（**坐标只读**）；缺省键不变，`description: null` = 清空 |
+| `POST /world/location/move` `{map_id?, row, col, to_row, to_col}` | 移动地块（原子重写全图引用；目标格被占 → 400） |
+| `POST /world/location/delete` `{map_id?, row, col}` | 删除地块（级联清空指向它的目标，拒绝删除有玩家占据的地块） |
+| `POST /world/connection/update` `{map_id?, row, col, direction, enabled?, paths?}` | 编辑连接槽位（方向不可改；`paths` = 平行路径列表，每条含 label / reveal_target / targets） |
+| `POST /world/template/create` `{id, name, map_id?, row, col}` | 从源地块捕获模板 |
+| `POST /world/template/update` `{id, name?, map_id?, row?, col?}` | 改名或重新捕获 |
+| `POST /world/template/delete` `{id}` | 删除模板 |
+| `POST /world/template/apply` `{id, map_id?, row, col}` | 应用模板到空地块 |
 
-handler 只做类型校验（dict、字符串、layout 数字排除 bool、reveal_target 布尔、direction 字符串），语义校验抛给引擎（`WorldError` → 400 error 信封）；update 按 payload 出现的键拼 kwargs。
+handler 只做类型校验（dict、字符串、整数坐标排除 bool、布尔），语义校验抛给引擎（`WorldError` → 400 error 信封）；update 按 payload 出现的键拼 kwargs。
 
 ## 插件网页（pages/world/）— 单页双模式调试工具
 
 定位：供管理员在 dashboard 内验证世界与移动逻辑，非正式用户入口（正式入口为 v2 独立网页）。单页内分段控件切换两种视图（`app.js` / `shared.js` / `edit-view.js` / `edit-forms.js` / `play-view.js`，纯 ES module 无构建）。
 
-- 无本地 player_id → 先注册 → `GET /world/state` → 渲染。
-- **编辑模式（上帝视角，固定边界地图 + 右键拖动 + 缩略图 + 详情栏）**：绝对定位画布渲染，地图为**固定大小网格**——内容边界外任意方向再延伸 `EDGE=10` 个空地块（视图有大小，可平移范围固定；空世界时以原点为中心的回退网格）。**地块是唯一的「格」**（正方形 `CELL=120`，只显示名字与 id + 出生点徽标，layout 整数坐标决定主位）；**连接不以格呈现**，而是绘制在地块间隙（`GAP=46`）中的 SVG 连线：`a→b` 单向（目标为方向相邻地块）带箭头；`a↔b` 双向（间隙两侧都存在普通出边）无箭头连线；`a→b′` 非常规连接（目标非方向相邻地块，如环路 / 捷径 / 跨区连接）带箭头虚线 + 末端小标记格；相邻地块之间可同时出现两条连接（如 `a→b` 普通 + `b→c′` 非常规），各自独立绘制、沿间隙垂直方向均布错开。**查看 / 编辑子模式**：查看模式只显示已存在的地块与连接（无空地块格、无网格背景）；编辑模式显示全部空地块（可点击新建）与网格背景，点击网格背景可就近槽位新建。**视图隐藏横竖滚动条**：右键拖动 / 滚轮平移（Shift+滚轮横向），Ctrl/⌘+滚轮（含触控板捏合）以光标为中心缩放 + 工具条 − / + / 百分比 / 适应（20%–400%，默认适应内容边界居中）；**右下角全图缩略图**：显示全图（地图边界 + 地块点）与当前视口范围，可收起/展开、可拖动（标题栏移动缩略图），点击或拖动缩略图可跳转视口；滚动平移 / 缩放时视口框实时更新。**右侧详情栏**（可收起/展开）：点击地块、连接线或空地块在栏内查看/编辑——编辑模式点击空地块新建、点击地块创建连接（方向 + 目的地可自选，方向指向相邻地块时自动选中该目标、否则可手动任选 → 非常规连接）、点击连接线编辑（单条连接线点击直接选中该出口；双向合并线 / 多边同线点击选中整个间隙）、点击地块或间隙查看/编辑块内出口——创建连接只从地块面板发起（延伸出去）。
-- **玩家模式**：地图 div 中间是**只含地块名称的小块**（无说明文本 / 玩家 id），有出边连接的 1 跳目标按 `direction` 放上/右/下/左——**目标格只显示地块名**（无出口标签等详细信息；格收缩到内容大小并居中，长名在格内换行、不再省略号截断）；**无连接的槽位不可见**；所有边一视同仁（无箭头简单连线，不查反向边、不画方向）；**无回环**（自环出口照常占槽位、目标格即当前地块）；隐藏目标显示 `???`（名称只取 scene 的 `target_name`，绝不全图查名）；当前地块说明文本渲染在与地图 div **平级的独立信息 div**（实体系统后续版本接入）；**视口内整体不滚动**：页面 `body` 固定 `100dvh` 高度，地图 div **动态填充剩余空间**（棋盘正方形取地图区域宽/高较小值、随区域变化自适应），详情列在 PC 为右侧一整列、移动端为下方固定高度区，均可单独滚动；违规地图（出度 >4 或同方向冲突）前 4 槽 + 「+N」折叠 → 展开全部出口列表（保留 exit_id）可收回；点击目标格按 exit_id 移动。
+- 无本地 player_id → 先注册 → `GET /world/state` → 渲染（`shared.js` 以 (row,col) 读地块、按 `DIR_OFFSETS`（与引擎对齐）判定死引用）。
+- **编辑模式（上帝视角，网格地图 + 右键拖动 + 缩放 + 缩略图 + 详情栏）**：绝对定位画布渲染，地块按 (row,col) 落主格（正方形 `CELL=120`，只显示名字 + 出生点徽标；**坐标只读**）；**连接绘制在地块间隙（`GAP=46`）中的 SVG 连线**——每个方向的连接槽位画在对应一侧间隙，槽内多条平行路径沿间隙垂直方向错开（主路径实线 + 箭头；路径内意外目标以目标点呈现；**死引用** = 槽启用但主目标不可解析 → 红色虚线 + 红标记）；点击间隙可选中**两侧地块**对应方向的槽位。**查看 / 编辑子模式**：查看模式只显示已存在的地块与连接；编辑模式显示全部空地块（可点击新建，可选模板）与网格背景。**视图隐藏横竖滚动条**：右键拖动 / 滚轮平移（Shift+滚轮横向），Ctrl/⌘+滚轮（含触控板捏合）以光标为中心缩放 + 工具条 − / + / 百分比 / 适应（20%–400%，默认适应内容边界居中）；**右下角全图缩略图**：显示全图与当前视口范围，可收起/展开、可拖动，点击或拖动可跳转视口。**右侧详情栏**（可收起/展开）：点击地块查看/编辑（名称 / 分时段描述 / 槽位摘要 / 「移动地块」工具 / 捕获为模板 / 删除）、点击间隙编辑连接槽位（路径增删 / 排序 / 每条独立 label + 隐藏目标 + 目标列表排序与权重）、点击空地块新建（可指定模板）。
+- **玩家模式**：地图 div 中间是**只含地块名称的小块**，上/右/下/左各放一个**方向槽位格**（无路径的方向不渲染），格内是该方向**全部平行路径的按钮列表**（每条显示 label + 主目标名；隐藏目标显示 `???`，名称只取 scene 的 `target_name`，绝不全图查名）；当前地块说明文本渲染在与地图 div **平级的独立信息 div**（实体系统后续版本接入）；**视口内整体不滚动**：页面 `body` 固定 `100dvh` 高度，棋盘正方形取地图区域宽/高较小值、随区域变化自适应，详情列在 PC 为右侧一整列、移动端为下方固定高度区，均可单独滚动；点击路径按钮按「方向 + 路径索引」移动。
 - 无 SSE；sandbox iframe 无 localStorage / 原生 alert → 自绘 modal + textContent 转义 + 模块级 playerId（刷新重新注册）。
 
 ## 一致性
@@ -113,13 +118,13 @@ handler 只做类型校验（dict、字符串、layout 数字排除 bool、revea
 - aiosqlite 真异步（连接内语句排队），锁内直接 `await`，无需 to_thread。
 - 人类移动只改内存；agent 移动额外写回 SQLite（跨对话连续）。
 
-## 数据模型重构（v3 目标模型，规划中）
+## 数据模型 v3（2026-08-13 已实施）
 
-> 现状模型（上文「数据模型」一节）经评审后确定重构方向。核心变化：
+> v2 模型（id 关联的有向图）经评审后重构，**已实施上线**。核心变化：
 > **地块身份从 id 改为 (map_id, 行, 列)**；**连接从独立实体改为地块内嵌的固定 4 方向槽位**；
 > **文本引入分时段加权（TextSchedule）**；**引入地块模板（复制预设）**。
 > 范围：**单地图 + 引入 map_id**（多地图为将来留位，本次不实现多世界切换）。
-> 实施计划见 `REFACTOR_PLAN.md`。
+> **无迁移**：solo 迭代、未公开，旧 world.db 直接丢弃、播种世界重建（`REFACTOR_PLAN.md` 全部阶段已完成）。
 
 ### 决策记录（2026-08-13）
 
@@ -134,7 +139,7 @@ handler 只做类型校验（dict、字符串、layout 数字排除 bool、revea
 | 模板 | 复制预设（非继承），应用到空地块 |
 | 移动接口 | 按方向 + 路径选择 + 路径内加权抽目标（不再按 exit_id；路径以索引标识，场景内有效） |
 
-### 目标数据模型（world/model.py）
+### 数据模型（world/v3model.py，已实施）
 
 ```python
 @dataclass
@@ -248,9 +253,9 @@ class WorldMap:
 
 ## 后续计划
 
-### 数据模型重构 v3（下一里程碑）
+### 数据模型 v3（已完成）
 
-地块身份化（(map_id, 行, 列)）+ 连接内嵌 4 方向槽位 + 分时段加权文本（TextSchedule）+ 地块模板。设计见上文「数据模型重构（v3 目标模型，规划中）」，实施计划见 `REFACTOR_PLAN.md`。
+地块身份化（(map_id, 行, 列)）+ 连接内嵌 4 方向槽位 + 分时段加权文本（TextSchedule）+ 地块模板已上线（见上文「数据模型 v3」）。下一步候选：多世界切换（多 map 行 + 跨图移动入口）、实体与交互系统。
 
 ### v2：独立网页（正式用户入口）
 
@@ -269,7 +274,7 @@ class WorldMap:
 
 ### 地图可视化编辑
 
-有向图编辑：增删地块、增删带标签有向出边、设置 `reveal_target` / 网格坐标。v0.2 已在插件调试页落地单页双模式的编辑能力（交替网格表格 + 详情栏、查看/编辑子模式、方向 + 目的地可自选的连接创建、非相邻连接以虚线强调条呈现）；v2 独立网页将作为正式的可视化编辑入口。
+网格世界编辑：增删地块、编辑 4 方向连接槽位（平行路径增删 / 排序 / 权重）、设置 `reveal_target` / 分时段描述 / 模板。v3 已在插件调试页落地（间隙连线 + 详情栏、查看/编辑子模式、移动地块工具、死引用标红/虚线、模板应用）；v2 独立网页将作为正式的可视化编辑入口。
 
 ### 人与 agent 实时互见（SSE 事件流）
 
