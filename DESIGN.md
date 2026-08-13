@@ -29,7 +29,7 @@ WorldStore（world/store.py，SQLite aiosqlite + WAL，启动全量载入内存�
 | `main.py` | Star 装配：引擎 + 路由注册 + LLM 工具 |
 | `tests/` | 引擎 / API 单测 |
 
-## 数据模型（world/model.py）
+## 数据模型（world/model.py，v2 现状）
 
 - `Location(id, name, description, layout_x=None, layout_y=None)` — `layout` 为编辑表格的整数网格坐标（x=列、y=行，决定地块主位），仅可视化提示、与拓扑无关（可达性只由出边定义）；未设坐标时编辑器确定性兜底到首个空闲格。
 - `Exit(id, from_id, to_id, label, reveal_target=True, direction="up")` — 有向；同 `(from_id, to_id)` 允许多条不同 label 的出边；`reveal_target=False` 时场景隐藏目标名（显示 `???`）；`direction` 为玩家视图十字槽位方向（`up/right/down/left`），编辑器保证同一出发地块的出边方向互异（数据层不强制）。
@@ -113,7 +113,136 @@ handler 只做类型校验（dict、字符串、layout 数字排除 bool、revea
 - aiosqlite 真异步（连接内语句排队），锁内直接 `await`，无需 to_thread。
 - 人类移动只改内存；agent 移动额外写回 SQLite（跨对话连续）。
 
+## 数据模型重构（v3 目标模型，规划中）
+
+> 现状模型（上文「数据模型」一节）经评审后确定重构方向。核心变化：
+> **地块身份从 id 改为 (map_id, 行, 列)**；**连接从独立实体改为地块内嵌的固定 4 方向槽位**；
+> **文本引入分时段加权（TextSchedule）**；**引入地块模板（复制预设）**。
+> 范围：**单地图 + 引入 map_id**（多地图为将来留位，本次不实现多世界切换）。
+> 实施计划见 `REFACTOR_PLAN.md`。
+
+### 决策记录（2026-08-13）
+
+| 决策点 | 结论 |
+|---|---|
+| 多地图范围 | 单地图 + 引入 map_id（结构就绪，不做多世界切换） |
+| 连接目标跨图 | 目标带 `map_id`（空 = 当前地图）；单图阶段恒为空 |
+| 隐藏目标 | 保留，每槽一个 `reveal_target` 布尔；多目标时**只展示首个目标名**（隐藏则 `???`） |
+| 目标语义 | 列表有序：**首个 = 期望路径**（展示名据此显示）；其余 = 意外路径（加权随机小概率，如「脚滑跌下悬崖」「没看路掉进井盖」） |
+| 时间语义 | 每日循环钟点窗口（可跨午夜）+ 地图级时区（默认服务器本地） |
+| 地块移动 | 坐标只读，专门「移动地块」工具：原子重写指向旧坐标的所有连接目标与该地块上玩家位置；目标格被占则拒绝 |
+| 模板 | 复制预设（非继承），应用到空地块 |
+| 移动接口 | 按方向 + 加权抽目标（不再按 exit_id） |
+
+### 目标数据模型（world/model.py）
+
+```python
+@dataclass
+class TextItem:
+    text: str
+    weight: float = 1.0
+
+
+@dataclass
+class TextPeriod:
+    start: str  # "HH:MM"，每日循环钟点窗口起点
+    end: str    # "HH:MM"，终点（可跨午夜）
+    items: list[TextItem]
+
+
+@dataclass
+class TextSchedule:
+    """分时段加权文本：取当前时间命中的时段，再按权重抽一条文本。
+
+    归一化：缺省 = 单时段全天（00:00–24:00）+ 单条文本权重 1；
+    重叠时段按列表顺序先命中者优先。时钟与 PRNG 注入（保证测试确定性）。
+    """
+
+    periods: list[TextPeriod] = field(default_factory=lambda: [TextPeriod("00:00", "24:00", [TextItem("", 1.0)])])
+
+    def resolve(self, now, rng) -> str: ...
+```
+
+```python
+@dataclass
+class Target:
+    map_id: str = ""  # 空 = 当前地图（单图阶段恒为空）
+    row: int
+    col: int
+    weight: float = 1.0
+
+
+@dataclass
+class ConnectionSlot:
+    direction: str    # up/right/down/left，固定不可修改
+    enabled: bool = False
+    label: TextSchedule | None = None  # 出口标签（时段加权，复用 TextSchedule）
+    reveal_target: bool = True
+    targets: list[Target] = field(default_factory=list)
+    # 默认目标 = 当前地块坐标向 direction 偏移 1（up=行-1 / down=行+1 / left=列-1 / right=列+1）
+
+
+@dataclass
+class Location:
+    map_id: str
+    row: int
+    col: int
+    name: str
+    description: TextSchedule | None = None
+    connections: dict[str, ConnectionSlot]  # 固定键：up/right/down/left（用 dict 而非数组，避免顺序歧义）
+
+
+@dataclass
+class WorldMap:
+    id: str
+    name: str
+    description: TextSchedule | None = None
+    timezone: str | None = None  # 地图级时区，None = 服务器本地
+    spawn_row: int = 0
+    spawn_col: int = 0
+```
+
+### 语义细节
+
+- **目标有序性**：槽位 `targets` 列表有序——**首个目标 = 期望路径**（`world_look` / 玩家视图只显示首个目标名，隐藏则 `???`），其余目标 = 意外路径（加权随机，仅在移动结算时可能命中）。重排目标 = 改主路径（UI 需排序控件 + 权重可视化）。
+- **死引用规则**：启用槽位中，**首个目标不可解析**（目标地图不存在 / 目标地块不存在 / 坐标越界）→ 整槽视为禁用；**其余目标**不可解析 → 静默跳过（意外目标不存在就当没发生）。UI 需区分「显式禁用」与「死引用」（启用但无有效目标 → 标红/虚线提示）。
+- **隐藏目标**：`reveal_target` 每槽一个布尔，为假时首个目标名显示 `???`；不展示目标列表中的其余目标名。
+- **移动结算**：`move(player, direction, target=None)` → 解析当前地块该方向槽位，启用则从 `targets` 按权重抽取目标（显式传入 `target` 坐标则直取）；玩家位置 = 目标 `(map_id, row, col)`（跨图移动会切图）；agent 位置写回。
+- **地块移动**：坐标只读（表单不可改）；「移动地块」原子操作 = 改该地块 `(row,col)` + 重写全图指向旧坐标的所有连接目标 + 重写该地块上玩家位置；目标格被占 → 拒绝（不做交换）。
+- **模板**：复制预设（CRUD + 应用到空地块），复制 name / description / connections 四槽（label / reveal_target / enabled / targets）。目标复制策略：**同图目标存方向相对偏移**（放置时按地块位置平移）；**跨图目标存绝对 `map_id+坐标`** 原样复制。
+- **出度结构上限 = 4**：每地块固定 4 槽，方向互异升格为结构约束。同方向多出口的「平行可选路径」不再可表达，统一为「主路径 + 意外路径」加权模型（语义变化，`world_look` / `world_move` 措辞随之更新）。
+
+### 持久化与迁移（world/store.py）
+
+| 表 | 说明 |
+|---|---|
+| `maps(id TEXT PK, name, description_json, timezone, spawn_row, spawn_col)` | 地图（本次仅 1 行） |
+| `locations(map_id TEXT, row INT, col INT, name, description_json, conns_json, PRIMARY KEY(map_id,row,col))` | 地块；`conns_json` 存 4 槽位配置（纯文本 JSON） |
+| `templates(id TEXT PK, name, data_json)` | 地块模板（复制预设） |
+| `world_meta(key TEXT PK, value)` | `schema_version` + agent 位置 `(map_id,row,col)` |
+
+v2 → v3 迁移：建 `maps` 并插入默认地图；`locations` 的 layout 坐标 → `(row,col)`（无坐标 → firstFreeCell 兜底）；`exits` → 对应方向槽位（`direction` → 槽，`to_id` → 目标坐标，`reveal_target` 保留）；agent 位置改写。种子世界（小镇 + 迷雾区）按新模型重建——多边同目标 → 多目标加权，隐藏目标 / 环路表达保留。
+
+### 接口与工具变化
+
+| 变化 | 说明 |
+|---|---|
+| `GET /world/state` | 返回地图信息 + 全量地块（含连接槽位）；玩家位置为 `(map_id,row,col)` |
+| `POST /world/move` `{player_id, direction, target?}` | 按方向移动（不再用 exit_id）；`target` 可选显式指定坐标 |
+| `POST /world/location/create` `{row, col, name, description?, template_id?}` | 新建（可用模板）；重复坐标报错 |
+| `POST /world/location/update` `{row, col, name?, description?}` | 坐标不可改 |
+| `POST /world/location/move` `{row, col, to_row, to_col}` | 移动工具（原子重写引用） |
+| `POST /world/location/delete` `{row, col}` | 级联清空指向它的目标；拒绝删除有玩家占据的地块 |
+| `POST /world/connection/update` `{row, col, direction, enabled?, label?, reveal_target?, targets?}` | 编辑连接槽位 |
+| `POST /world/template/{create,update,delete,apply}` | 模板 CRUD + 应用到空地块 |
+| `world_look` | 4 方向槽位列表，label 取时段文本，目标只显示首个目标名（或 `???`） |
+| `world_move(direction)` | 按方向移动 |
+
 ## 后续计划
+
+### 数据模型重构 v3（下一里程碑）
+
+地块身份化（(map_id, 行, 列)）+ 连接内嵌 4 方向槽位 + 分时段加权文本（TextSchedule）+ 地块模板。设计见上文「数据模型重构（v3 目标模型，规划中）」，实施计划见 `REFACTOR_PLAN.md`。
 
 ### v2：独立网页（正式用户入口）
 
