@@ -486,10 +486,10 @@ body {
 }
 
 /* ---------- 全图缩略图（可收起 / 可拖动，显示全图 + 当前视口） ---------- */
+/* position: fixed 锚定视口：滚动容器 #graph 平移 / 缩放时不会被一起滚出可视区；
+   left/top 由 edit-view.js 按图区域右下角计算（拖动后可保存）。 */
 .minimap {
-  position: absolute;
-  right: 14px;
-  bottom: 14px;
+  position: fixed;
   z-index: 10;
   border: 1px solid var(--border);
   border-radius: 10px;

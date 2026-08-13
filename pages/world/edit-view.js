@@ -114,6 +114,7 @@ export function initEditView(options) {
     if (!canvasEl) return;
     clampScroll();
     updateMinimap();
+    anchorMinimap();
   });
   updateZoomPct();
 
@@ -788,10 +789,6 @@ function buildMinimap(pos) {
   if (minimapCollapsed) {
     m.classList.add("collapsed");
   }
-  if (minimapPos) {
-    m.style.left = `${minimapPos.left}px`;
-    m.style.top = `${minimapPos.top}px`;
-  }
 
   const head = document.createElement("div");
   head.className = "minimap-head";
@@ -858,6 +855,22 @@ function buildMinimap(pos) {
   minimapViewRect.classList.add("minimap-view");
   svg.appendChild(minimapViewRect);
   updateMinimap();
+  anchorMinimap();
+}
+
+// 缩略图定位（fixed 视口坐标）：未拖动时锚定图区域右下角，拖动后沿用保存的位置
+function anchorMinimap() {
+  if (!minimapEl) {
+    return;
+  }
+  if (minimapPos) {
+    minimapEl.style.left = `${minimapPos.left}px`;
+    minimapEl.style.top = `${minimapPos.top}px`;
+    return;
+  }
+  const gr = graphEl.getBoundingClientRect();
+  minimapEl.style.left = `${gr.right - minimapEl.offsetWidth - 14}px`;
+  minimapEl.style.top = `${gr.bottom - minimapEl.offsetHeight - 14}px`;
 }
 
 function toggleMinimap() {
@@ -880,10 +893,10 @@ function startMoveMinimap(event) {
   const offY = event.clientY - rect.top;
   const move = (ev) => {
     const gr = graphEl.getBoundingClientRect();
-    const maxL = Math.max(4, graphEl.clientWidth - rect.width - 4);
-    const maxT = Math.max(4, graphEl.clientHeight - rect.height - 4);
-    const left = clamp(ev.clientX - gr.left - offX, 4, maxL);
-    const top = clamp(ev.clientY - gr.top - offY, 4, maxT);
+    const maxL = gr.right - rect.width - 4;
+    const maxT = gr.bottom - rect.height - 4;
+    const left = clamp(ev.clientX - offX, gr.left + 4, maxL);
+    const top = clamp(ev.clientY - offY, gr.top + 4, maxT);
     minimapEl.style.left = `${left}px`;
     minimapEl.style.top = `${top}px`;
     minimapPos = { left, top };
