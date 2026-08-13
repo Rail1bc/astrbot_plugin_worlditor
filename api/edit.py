@@ -1,8 +1,8 @@
-"""地图编辑接口：地块 / 出口的增删改（可视化编辑器数据源）。
+"""地图编辑接口：地块 / 连接槽位 / 模板的增删改（可视化编辑器数据源）。
 
-handler 只做类型校验（dict、字符串、layout 数字排除 bool、reveal_target 布尔、
-direction 字符串），语义校验（地块/出口是否存在、方向合法性、重复 id 等）抛给
-引擎（WorldError → 400 error 信封）。update 按 payload 出现的键拼 kwargs。
+handler 只做类型校验（dict、字符串、整数坐标排除 bool 等），语义校验（地块是否
+存在、方向合法性、重复 id 等）抛给引擎（WorldError → 400 error 信封）。update 按
+payload 出现的键拼 kwargs。
 """
 
 from __future__ import annotations
@@ -10,6 +10,9 @@ from __future__ import annotations
 from astrbot.api.web import error_response, json_response, request
 
 from ..world.engine import WorldError
+from ..world.v3model import location_to_dict
+
+_UNSET = object()
 
 
 async def _body() -> dict:
@@ -20,144 +23,190 @@ async def _body() -> dict:
     return payload
 
 
-def _require_str(payload: dict, key: str, what: str) -> str:
+def _req_str(payload: dict, key: str, what: str) -> str:
     value = payload.get(key)
     if not isinstance(value, str):
         raise WorldError(f"{what}必须是字符串")
     return value
 
 
-def _opt_str(payload: dict, key: str, default: str) -> str:
-    value = payload.get(key, default)
-    if not isinstance(value, str):
-        raise WorldError(f"{key} 必须是字符串")
+def _req_int(payload: dict, key: str, what: str) -> int:
+    value = payload.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise WorldError(f"{what}必须是整数")
     return value
 
 
-def _opt_bool(payload: dict, key: str, default: bool) -> bool:
-    value = payload.get(key, default)
+def _opt_str(payload: dict, key: str, what: str) -> str:
+    value = payload.get(key)
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise WorldError(f"{what}必须是字符串")
+    return value
+
+
+def _opt_bool(payload: dict, key: str) -> bool | object:
+    if key not in payload:
+        return _UNSET
+    value = payload[key]
     if not isinstance(value, bool):
         raise WorldError(f"{key} 必须是布尔值")
     return value
 
 
-def _layout_args(payload: dict) -> dict:
-    """把 layout 键展开为引擎坐标 kwargs。
+def _coords(payload: dict) -> dict:
+    """row/col 必填整数。"""
+    return {
+        "row": _req_int(payload, "row", "row"),
+        "col": _req_int(payload, "col", "col"),
+    }
 
-    缺省=不传（create 默认无坐标，update 保持不变）；null=显式清空坐标；
-    {x, y}=更新坐标（x/y 必须同时提供，排除 bool）。
-    """
-    if "layout" not in payload:
-        return {}
-    value = payload["layout"]
-    if value is None:
-        return {"layout_x": None, "layout_y": None}
-    if not isinstance(value, dict):
-        raise WorldError("layout 必须是 {x, y} 对象或 null")
-    x, y = value.get("x"), value.get("y")
-    if (
-        isinstance(x, bool)
-        or isinstance(y, bool)
-        or not isinstance(x, (int, float))
-        or not isinstance(y, (int, float))
-    ):
-        raise WorldError("layout 的 x/y 必须是数字")
-    return {"layout_x": x, "layout_y": y}
+
+def _map_kwargs(payload: dict) -> dict:
+    return {"map_id": _opt_str(payload, "map_id", "map_id") or ""}
+
+
+def _description_value(payload: dict) -> object:
+    """description 键存在时：None=清空，str/dict=时段加权文本。"""
+    if "description" not in payload:
+        return _UNSET
+    value = payload["description"]
+    if value is None or isinstance(value, (str, dict)):
+        return value
+    raise WorldError("description 必须是字符串、时段对象或 null")
 
 
 class EditAPI:
-    """地图编辑：地块 / 出口的增删改（可视化编辑器数据源）。"""
+    """地图编辑：地块 / 连接槽位 / 模板（可视化编辑器数据源）。"""
 
     async def world_location_create(self):
-        """新建地块。body: {id, name, description?, layout?}"""
+        """新建地块。body: {map_id?, row, col, name?, description?, template_id?}"""
         try:
             payload = await _body()
-            loc_id = _require_str(payload, "id", "地块 id")
-            name = _require_str(payload, "name", "地块名称")
-            description = payload.get("description")
-            if description is not None and not isinstance(description, str):
-                raise WorldError("description 必须是字符串")
-            loc = await self.engine.create_location(
-                loc_id, name, description or "", **_layout_args(payload)
-            )
+            kwargs = {**_coords(payload), **_map_kwargs(payload)}
+            kwargs["name"] = _opt_str(payload, "name", "地块名称")
+            if "description" in payload:
+                kwargs["description"] = _description_value(payload)
+            if "template_id" in payload:
+                kwargs["template_id"] = _req_str(
+                    payload, "template_id", "template_id"
+                )
+            loc = await self.engine.create_location(**kwargs)
         except WorldError as e:
             return error_response(str(e), status_code=400)
-        return json_response({"location": loc.as_dict()})
+        return json_response({"location": location_to_dict(loc)})
 
     async def world_location_update(self):
-        """更新地块。body: {id, name?, description?, layout?}，layout: null=清坐标。"""
+        """更新地块（坐标只读）。body: {map_id?, row, col, name?, description?}"""
         try:
             payload = await _body()
-            loc_id = _require_str(payload, "id", "地块 id")
-            kwargs: dict = {}
+            kwargs = {**_coords(payload), **_map_kwargs(payload)}
             if "name" in payload:
-                kwargs["name"] = _require_str(payload, "name", "地块名称")
+                kwargs["name"] = _req_str(payload, "name", "地块名称")
             if "description" in payload:
-                desc = payload["description"]
-                if desc is not None and not isinstance(desc, str):
-                    raise WorldError("description 必须是字符串")
-                kwargs["description"] = desc
-            kwargs.update(_layout_args(payload))
-            loc = await self.engine.update_location(loc_id, **kwargs)
+                kwargs["description"] = _description_value(payload)
+            loc = await self.engine.update_location(**kwargs)
         except WorldError as e:
             return error_response(str(e), status_code=400)
-        return json_response({"location": loc.as_dict()})
+        return json_response({"location": location_to_dict(loc)})
 
     async def world_location_delete(self):
-        """删除地块（级联删出边，拒绝删除有玩家占据的地块）。body: {id}"""
+        """删除地块（级联清除指向它的目标，拒绝删除有玩家占据的地块）。body: {map_id?, row, col}"""
         try:
             payload = await _body()
-            loc_id = _require_str(payload, "id", "地块 id")
-            await self.engine.delete_location(loc_id)
+            await self.engine.delete_location(**_coords(payload), **_map_kwargs(payload))
         except WorldError as e:
             return error_response(str(e), status_code=400)
         return json_response({"ok": True})
 
-    async def world_exit_create(self):
-        """新建出口。body: {id, from_id, to_id, label, reveal_target?, direction?}"""
+    async def world_location_move(self):
+        """移动地块（原子重写引用）。body: {map_id?, row, col, to_row, to_col}"""
         try:
             payload = await _body()
-            exit_id = _require_str(payload, "id", "出口 id")
-            from_id = _require_str(payload, "from_id", "from_id")
-            to_id = _require_str(payload, "to_id", "to_id")
-            label = _require_str(payload, "label", "出口标签")
-            exit_ = await self.engine.create_exit(
-                exit_id,
-                from_id,
-                to_id,
-                label,
-                reveal_target=_opt_bool(payload, "reveal_target", True),
-                direction=_opt_str(payload, "direction", "up"),
+            to_row = _req_int(payload, "to_row", "to_row")
+            to_col = _req_int(payload, "to_col", "to_col")
+            loc = await self.engine.move_location(
+                **_coords(payload), to_row=to_row, to_col=to_col, **_map_kwargs(payload)
             )
         except WorldError as e:
             return error_response(str(e), status_code=400)
-        return json_response({"exit": exit_.as_dict()})
+        return json_response({"location": location_to_dict(loc)})
 
-    async def world_exit_update(self):
-        """更新出口（from_id 不可变）。body: {id, to_id?, label?, reveal_target?, direction?}"""
+    async def world_connection_update(self):
+        """更新连接槽位（方向不可改）。body: {map_id?, row, col, direction, enabled?, paths?}"""
         try:
             payload = await _body()
-            exit_id = _require_str(payload, "id", "出口 id")
-            kwargs: dict = {}
-            if "to_id" in payload:
-                kwargs["to_id"] = _require_str(payload, "to_id", "to_id")
-            if "label" in payload:
-                kwargs["label"] = _require_str(payload, "label", "出口标签")
-            if "reveal_target" in payload:
-                kwargs["reveal_target"] = _opt_bool(payload, "reveal_target", True)
-            if "direction" in payload:
-                kwargs["direction"] = _opt_str(payload, "direction", "up")
-            exit_ = await self.engine.update_exit(exit_id, **kwargs)
+            direction = _req_str(payload, "direction", "direction")
+            kwargs: dict = {**_coords(payload), **_map_kwargs(payload)}
+            if "enabled" in payload:
+                kwargs["enabled"] = _opt_bool(payload, "enabled")
+            if "paths" in payload:
+                kwargs["paths"] = _paths_value(payload["paths"])
+            loc = await self.engine.update_connection(direction=direction, **kwargs)
         except WorldError as e:
             return error_response(str(e), status_code=400)
-        return json_response({"exit": exit_.as_dict()})
+        return json_response({"location": location_to_dict(loc)})
 
-    async def world_exit_delete(self):
-        """删除一条出口。body: {id}"""
+    async def world_template_create(self):
+        """从源地块捕获模板。body: {id, name, map_id?, row, col}"""
         try:
             payload = await _body()
-            exit_id = _require_str(payload, "id", "出口 id")
-            await self.engine.delete_exit(exit_id)
+            template_id = _req_str(payload, "id", "模板 id")
+            name = _req_str(payload, "name", "模板名称")
+            tpl = await self.engine.create_template(
+                template_id, name, **_coords(payload), **_map_kwargs(payload)
+            )
+        except WorldError as e:
+            return error_response(str(e), status_code=400)
+        return json_response({"template": {"id": tpl.id, "name": tpl.name}})
+
+    async def world_template_update(self):
+        """更新模板（改名或重新捕获）。body: {id, name?, map_id?, row?, col?}"""
+        try:
+            payload = await _body()
+            template_id = _req_str(payload, "id", "模板 id")
+            kwargs: dict = {}
+            if "name" in payload:
+                kwargs["name"] = _req_str(payload, "name", "模板名称")
+            if "row" in payload or "col" in payload:
+                kwargs.update(_coords(payload))
+            if "map_id" in payload:
+                kwargs["map_id"] = _opt_str(payload, "map_id", "map_id") or ""
+            tpl = await self.engine.update_template(template_id, **kwargs)
+        except WorldError as e:
+            return error_response(str(e), status_code=400)
+        return json_response({"template": {"id": tpl.id, "name": tpl.name}})
+
+    async def world_template_delete(self):
+        """删除模板。body: {id}"""
+        try:
+            payload = await _body()
+            template_id = _req_str(payload, "id", "模板 id")
+            await self.engine.delete_template(template_id)
         except WorldError as e:
             return error_response(str(e), status_code=400)
         return json_response({"ok": True})
+
+    async def world_template_apply(self):
+        """应用模板到空地块。body: {id, map_id?, row, col}"""
+        try:
+            payload = await _body()
+            template_id = _req_str(payload, "id", "模板 id")
+            loc = await self.engine.apply_template(
+                template_id, **_coords(payload), **_map_kwargs(payload)
+            )
+        except WorldError as e:
+            return error_response(str(e), status_code=400)
+        return json_response({"location": location_to_dict(loc)})
+
+
+def _paths_value(value: object) -> list:
+    if not isinstance(value, list):
+        raise WorldError("paths 必须是数组")
+    for p in value:
+        if not isinstance(p, dict):
+            raise WorldError("每条路径必须是对象")
+        if not isinstance(p.get("targets"), list):
+            raise WorldError("路径的 targets 必须是数组")
+    return value

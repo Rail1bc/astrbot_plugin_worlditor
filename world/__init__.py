@@ -11,21 +11,37 @@ from .engine import (
     WorldError,
     scene_to_text,
 )
-from .model import Exit, ExitView, Location, Player, SceneView
-from .store import AGENT_START_LOCATION, WorldStore
+from .store import DEFAULT_MAP_ID, WorldStore
+from .v3model import (
+    DIRECTIONS,
+    DIR_OFFSETS,
+    OPPOSITE_DIR,
+    Location,
+    Player,
+    SceneView,
+    Target,
+    TextSchedule,
+    WorldMap,
+    WorldTemplate,
+)
 
 __all__ = [
     "AGENT_PLAYER_ID",
-    "AGENT_START_LOCATION",
     "CLEANUP_INTERVAL_SECONDS",
+    "DEFAULT_MAP_ID",
+    "DIR_OFFSETS",
+    "DIRECTIONS",
     "HUMAN_IDLE_TIMEOUT_SECONDS",
-    "Exit",
-    "ExitView",
     "Location",
+    "OPPOSITE_DIR",
     "Player",
     "SceneView",
+    "Target",
+    "TextSchedule",
     "WorldEngine",
     "WorldError",
+    "WorldMap",
     "WorldStore",
+    "WorldTemplate",
     "scene_to_text",
 ]

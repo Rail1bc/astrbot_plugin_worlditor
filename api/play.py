@@ -30,25 +30,40 @@ class PlayAPI:
         return json_response(
             {
                 "player_id": player_id,
-                "location_id": loc.id,
+                "map_id": loc.map_id,
+                "row": loc.row,
+                "col": loc.col,
                 "location_name": loc.name,
             }
         )
 
     async def world_move(self):
-        """按出口 id 移动玩家，返回新场景。"""
+        """按方向移动玩家，返回新场景。
+
+        body: {player_id, direction, path?, target?}
+        ``path`` 为槽内路径索引（多路径时必填）；``target`` 为 {map_id?, row, col}，
+        指定时直取该坐标（须为路径目标之一）。
+        """
         payload = await request.json(default=None)
         if not isinstance(payload, dict):
             return error_response("请求体必须是 JSON 对象", status_code=400)
         player_id = str(payload.get("player_id") or "").strip()
-        exit_id = str(payload.get("exit_id") or "").strip()
-        if not player_id or not exit_id:
-            return error_response("player_id 与 exit_id 均为必填", status_code=400)
+        direction = str(payload.get("direction") or "").strip()
+        if not player_id or not direction:
+            return error_response("player_id 与 direction 均为必填", status_code=400)
+        path = payload.get("path")
+        if path is not None and not isinstance(path, int):
+            return error_response("path 必须是整数", status_code=400)
+        target = payload.get("target")
+        if target is not None and not isinstance(target, dict):
+            return error_response("target 必须是坐标对象", status_code=400)
         try:
-            scene = await self.engine.move(player_id, exit_id)
+            scene = await self.engine.move(
+                player_id, direction, path=path, target=target
+            )
         except WorldError as e:
             return error_response(str(e), status_code=400)
-        return json_response(scene.as_dict())
+        return json_response(scene.to_dict())
 
     async def world_deregister(self):
         """注销玩家（agent 不可注销；页面 unload 尽力调用，超时清理兜底）。"""

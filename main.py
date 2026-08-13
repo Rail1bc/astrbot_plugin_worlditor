@@ -1,13 +1,13 @@
 """世界编辑器插件（astrbot_plugin_worlditor）。
 
-世界是一个有向图：地块（Location）为节点，带标签的出口（Exit）为有向边。
-`a→b` 可达**不蕴含** `b→a`；不存在空间相邻——只有出边才构成"相邻/可达"。
-支持多边同目标、隐藏目标（reveal_target=false）与环路，可实现"迷路"效果。
+世界以 (map_id, 行, 列) 为身份的地块组成，连接内嵌于地块的固定 4 方向槽位
+（每槽多条平行路径，路径内首个目标 = 主目标、其余 = 意外加权目标）；支持
+分时段加权描述（TextSchedule）、隐藏目标（reveal_target=false → ???）、
+环路与非相邻连接，可实现"迷路"效果。
 
-v1 范围：基础地图 + 移动。
 - 任意人类用户以隐形实体（随机 id、仅内存、超时清理）在地图上移动；
 - agent 提供 ``world_look`` / ``world_move`` 两个工具，位置跨对话持久化（SQLite）；
-- 框架内置插件网页（pages/world/）仅作调试/验证工具，非正式用户入口。
+- 框架内置插件网页（pages/world/）作为调试 / 编辑 / 游玩工具。
 
 架构：world/ 世界引擎（协议无关，可被未来 MCP / 世界 HTTP API 复用），
 api/ Web API handler（插件页），本模块只做装配与 LLM 工具注册。
@@ -42,8 +42,9 @@ class WorlditorPlugin(Star, StateAPI, PlayAPI, EditAPI):
         """插件激活：载入持久化数据、恢复 agent 位置、启动清理任务。"""
         await self.engine.initialize()
         logger.info(
-            f"[worlditor] 世界编辑器已就绪：地块 {len(self.engine.list_locations())} 个，"
-            f"出口 {len(self.engine.list_all_exits())} 条。"
+            f"[worlditor] 世界编辑器已就绪：地图 {len(self.engine.list_maps())} 张，"
+            f"地块 {len(self.engine.list_locations())} 个，"
+            f"模板 {len(self.engine.list_templates())} 个。"
         )
 
     async def terminate(self) -> None:
@@ -54,10 +55,11 @@ class WorlditorPlugin(Star, StateAPI, PlayAPI, EditAPI):
 
     @llm_tool(name="world_look")
     async def tool_world_look(self, event: AstrMessageEvent) -> str:
-        """查看你在世界中的当前位置与可移动的出口。
+        """查看你在世界中的当前位置与可移动的方向。
 
-        出口以 [exit_id] 列出；移动时使用 world_move 并传入对应的 exit_id。
-        目标显示为 ??? 的出口意味着你看不清它通向哪里。
+        每个方向可能有多条路径，以 [方向:路径索引] 列出；移动时使用 world_move
+        并传入方向（多路径时带路径索引）。目标显示为 ??? 的路径意味着你看不清它
+        通向哪里。
         """
         scene = await self.engine.describe_scene(AGENT_PLAYER_ID)
         if scene is None:
@@ -65,14 +67,19 @@ class WorlditorPlugin(Star, StateAPI, PlayAPI, EditAPI):
         return scene_to_text(scene)
 
     @llm_tool(name="world_move")
-    async def tool_world_move(self, event: AstrMessageEvent, exit_id: str) -> str:
-        """沿出口移动到新位置，并返回新位置的场景。
+    async def tool_world_move(
+        self, event: AstrMessageEvent, direction: str, path: int | None = None
+    ) -> str:
+        """沿方向移动到新位置，并返回新位置的场景。
 
         Args:
-            exit_id(string): 出口 id，必须是 world_look 返回的出口列表中的一项。
+            direction(string): 移动方向，必须是 world_look 返回的 [方向] 之一
+                （up/right/down/left）。
+            path(number): 可选。该方向有多条平行路径时的路径索引，必须是
+                world_look 返回列表中的一项；单条路径时可省略。
         """
         try:
-            scene = await self.engine.move(AGENT_PLAYER_ID, exit_id)
+            scene = await self.engine.move(AGENT_PLAYER_ID, direction, path=path)
         except WorldError as e:
             return f"移动失败：{e}"
         return scene_to_text(scene)
