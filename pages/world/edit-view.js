@@ -427,7 +427,8 @@ function renderGap(svg, entry, isH) {
 function drawStub(svg, stub, isH, cx, cy, frac) {
   const { loc, direction, path, dead, adjacent, targetLabel } = stub;
   const source = isH ? (direction === "right" ? "l" : "r") : direction === "down" ? "t" : "b";
-  const perp = frac * GAP;
+  // 平行线沿间隙条全程均布（条长 = CELL）：横向间隙为上下方向堆叠、纵向间隙为左右方向堆叠
+  const perp = frac * CELL;
   let x1 = 0;
   let y1 = 0;
   let x2 = 0;
