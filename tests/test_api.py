@@ -175,13 +175,13 @@ def test_state_handler(tmp_path):
         data = json.loads(resp.body)
         assert len(data["maps"]) == 1
         assert data["maps"][0]["id"] == DEFAULT_MAP_ID
-        assert len(data["locations"]) == 8
+        assert len(data["locations"]) == 42
         assert data["locations"][0]["connections"]["up"]["enabled"] is True
         assert data["templates"] == []
         player = data["player"]
         assert player["player_id"] == player_id
         assert player["map_id"] == DEFAULT_MAP_ID
-        assert len(player["scene"]["paths"]) == 5
+        assert len(player["scene"]["paths"]) == 4
         agent = data["agent"]
         assert agent["player_id"] == AGENT_PLAYER_ID
         assert (agent["row"], agent["col"]) == (0, 0)
@@ -218,7 +218,7 @@ def test_move_handler(tmp_path):
             body={"player_id": player_id, "direction": "up"},
         )
         data = json.loads(resp.body)
-        assert data["location"]["name"] == "街角咖啡店"
+        assert data["location"]["name"] == "步行街·南街口"
         assert (data["row"], data["col"]) == (-1, 0)
         assert plugin.engine.get_player(player_id).pos_key() == (
             DEFAULT_MAP_ID,
@@ -230,18 +230,32 @@ def test_move_handler(tmp_path):
 
 
 def test_move_handler_with_path(tmp_path):
-    """多路径移动：指定 path 索引。"""
+    """多路径移动：先给广场 right 槽配两条路径，再指定 path 索引。"""
 
     async def fn(plugin: FakePlugin):
+        await call_handler(
+            plugin,
+            "world_connection_update",
+            body={
+                "row": 0,
+                "col": 0,
+                "direction": "right",
+                "enabled": True,
+                "paths": [
+                    {"label": "沿大道向东", "targets": [{"row": 0, "col": 1}]},
+                    {"label": "从后巷绕行", "targets": [{"row": 0, "col": 1}]},
+                ],
+            },
+        )
         reg = json.loads((await call_handler(plugin, "world_register", body={})).body)
         player_id = reg["player_id"]
         resp = await call_handler(
             plugin,
             "world_move",
-            body={"player_id": player_id, "direction": "down", "path": 1},
+            body={"player_id": player_id, "direction": "right", "path": 1},
         )
         data = json.loads(resp.body)
-        assert data["location"]["name"] == "中央公园"
+        assert data["location"]["name"] == "AstrBot大道"
 
     _run(_scenario(tmp_path, fn))
 
@@ -250,6 +264,21 @@ def test_move_handler_invalid(tmp_path):
     """非法方向 / 缺参 / 多路径缺 path / 未知玩家 → 400 error 信封。"""
 
     async def fn(plugin: FakePlugin):
+        # 先给广场 right 槽配两条路径，测多路径缺 path
+        await call_handler(
+            plugin,
+            "world_connection_update",
+            body={
+                "row": 0,
+                "col": 0,
+                "direction": "right",
+                "enabled": True,
+                "paths": [
+                    {"label": "沿大道向东", "targets": [{"row": 0, "col": 1}]},
+                    {"label": "从后巷绕行", "targets": [{"row": 0, "col": 1}]},
+                ],
+            },
+        )
         reg = json.loads((await call_handler(plugin, "world_register", body={})).body)
         player_id = reg["player_id"]
         resp = await call_handler(
@@ -264,7 +293,7 @@ def test_move_handler_invalid(tmp_path):
         resp3 = await call_handler(
             plugin,
             "world_move",
-            body={"player_id": player_id, "direction": "down"},
+            body={"player_id": player_id, "direction": "right"},
         )
         assert json.loads(resp3.body)["status"] == "error"  # 多路径缺 path
         resp4 = await call_handler(
@@ -278,7 +307,7 @@ def test_move_handler_invalid(tmp_path):
         resp5 = await call_handler(
             plugin,
             "world_move",
-            body={"player_id": player_id, "direction": "down", "path": "0"},
+            body={"player_id": player_id, "direction": "right", "path": "0"},
         )
         assert resp5.status_code == 400
 
@@ -305,7 +334,7 @@ def test_location_create_handler(tmp_path):
             == "海边。"
         )
         state = json.loads((await call_handler(plugin, "world_state")).body)
-        assert len(state["locations"]) == 9
+        assert len(state["locations"]) == 43
 
     _run(_scenario(tmp_path, fn))
 
@@ -384,7 +413,7 @@ def test_location_delete_handler(tmp_path):
         assert resp2.status_code == 400
         assert "有玩家" in json.loads(resp2.body)["message"]
         state = json.loads((await call_handler(plugin, "world_state")).body)
-        assert len(state["locations"]) == 7
+        assert len(state["locations"]) == 41
 
     _run(_scenario(tmp_path, fn))
 
@@ -396,7 +425,7 @@ def test_location_move_handler(tmp_path):
         resp = await call_handler(
             plugin,
             "world_location_move",
-            body={"row": -1, "col": 0, "to_row": 5, "to_col": 5},
+            body={"row": -1, "col": 0, "to_row": 5, "to_col": 5},  # 步行街·南街口
         )
         assert json.loads(resp.body)["location"]["row"] == 5
         state = json.loads((await call_handler(plugin, "world_state")).body)
@@ -474,16 +503,16 @@ def test_template_handlers(tmp_path):
         resp = await call_handler(
             plugin,
             "world_template_create",
-            body={"id": "cafe_tpl", "name": "咖啡店模板", "row": -1, "col": 0},
+            body={"id": "street_tpl", "name": "步行街模板", "row": -1, "col": 0},
         )
-        assert json.loads(resp.body)["template"]["id"] == "cafe_tpl"
+        assert json.loads(resp.body)["template"]["id"] == "street_tpl"
         resp2 = await call_handler(
             plugin,
             "world_template_apply",
-            body={"id": "cafe_tpl", "row": 10, "col": 10},
+            body={"id": "street_tpl", "row": 10, "col": 10},
         )
         loc = json.loads(resp2.body)["location"]
-        assert loc["name"] == "街角咖啡店"
+        assert loc["name"] == "步行街·南街口"
         assert loc["connections"]["down"]["paths"][0]["targets"][0] == {
             "row": 11,
             "col": 10,
@@ -493,19 +522,19 @@ def test_template_handlers(tmp_path):
         resp3 = await call_handler(
             plugin,
             "world_template_apply",
-            body={"id": "cafe_tpl", "row": 0, "col": 0},
+            body={"id": "street_tpl", "row": 0, "col": 0},
         )
         assert resp3.status_code == 400
         # 改名
         resp4 = await call_handler(
-            plugin, "world_template_update", body={"id": "cafe_tpl", "name": "新模板"}
+            plugin, "world_template_update", body={"id": "street_tpl", "name": "新模板"}
         )
         assert json.loads(resp4.body)["template"]["name"] == "新模板"
         state = json.loads((await call_handler(plugin, "world_state")).body)
         assert state["templates"][0]["name"] == "新模板"
         # 删除
         resp5 = await call_handler(
-            plugin, "world_template_delete", body={"id": "cafe_tpl"}
+            plugin, "world_template_delete", body={"id": "street_tpl"}
         )
         assert json.loads(resp5.body)["ok"] is True
         assert (

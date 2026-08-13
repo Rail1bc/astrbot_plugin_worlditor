@@ -36,7 +36,7 @@ from astrbot_plugin_worlditor.world.store import (  # noqa: E402
 from astrbot_plugin_worlditor.world.v3model import Target  # noqa: E402
 
 SH_TZ = ZoneInfo("Asia/Shanghai")
-SEED_LOCATION_COUNT = 8
+SEED_LOCATION_COUNT = 42
 
 
 def fixed_clock(hour: int, minute: int = 0):
@@ -64,7 +64,7 @@ async def _scenario(tmp_path: Path, fn, rand=None):
 
 
 def test_seed_and_map_load(tmp_path):
-    """种子世界载入：8 地块、默认地图、agent 位于出生点 (0,0) 小镇广场。"""
+    """种子世界载入：42 地块、默认地图、agent 位于出生点 (0,0) 小镇广场。"""
 
     async def fn(engine: WorldEngine):
         assert len(engine.list_locations()) == SEED_LOCATION_COUNT
@@ -78,9 +78,9 @@ def test_seed_and_map_load(tmp_path):
         assert agent.pos_key() == (DEFAULT_MAP_ID, 0, 0)
         plaza = engine.get_location(DEFAULT_MAP_ID, 0, 0)
         assert plaza is not None and plaza.name == "小镇广场"
-        # 广场场景：up 1 条 + down 2 条平行路径 + right 1 + left 1 = 5
+        # 广场场景：up/down/left/right 各 1 条 = 4
         scene = await engine.describe_scene(AGENT_PLAYER_ID)
-        assert scene is not None and len(scene.paths) == 5
+        assert scene is not None and len(scene.paths) == 4
         assert {p.direction for p in scene.paths} == {"up", "down", "right", "left"}
 
     _run(_scenario(tmp_path, fn))
@@ -110,7 +110,7 @@ def test_register_player_and_scene(tmp_path):
         scene = await engine.describe_scene("abc12345")
         assert scene is not None
         assert scene.location.name == "小镇广场"
-        assert len(scene.paths) == 5
+        assert len(scene.paths) == 4
         data = scene.to_dict()
         assert data["location"]["name"] == "小镇广场"
         assert all(
@@ -165,7 +165,7 @@ def test_agent_position_persists_across_restart(tmp_path):
     async def first_run():
         engine = make_engine(tmp_path / "world.db")
         await engine.initialize()
-        await engine.move(AGENT_PLAYER_ID, "up")  # 广场 → 咖啡店 (-1,0)
+        await engine.move(AGENT_PLAYER_ID, "up")  # 广场 → 步行街·南街口 (-1,0)
         assert engine.get_player(AGENT_PLAYER_ID).pos_key() == (
             DEFAULT_MAP_ID,
             -1,
@@ -200,7 +200,7 @@ def test_move_by_direction(tmp_path):
         await engine.register_player("abc12345")
         scene = await engine.move("abc12345", "up")
         assert (scene.map_id, scene.row, scene.col) == (DEFAULT_MAP_ID, -1, 0)
-        assert scene.location.name == "街角咖啡店"
+        assert scene.location.name == "步行街·南街口"
         player = engine.get_player("abc12345")
         assert player.pos_key() == (DEFAULT_MAP_ID, -1, 0)
         back = await engine.move("abc12345", "down")
@@ -210,7 +210,7 @@ def test_move_by_direction(tmp_path):
 
 
 def test_move_unknown_player_and_invalid_direction(tmp_path):
-    """未注册玩家 / 非法方向报错。"""
+    """未注册玩家 / 非法方向报错；大道西尽头为死路。"""
 
     async def fn(engine: WorldEngine):
         with pytest.raises(WorldError):
@@ -218,65 +218,106 @@ def test_move_unknown_player_and_invalid_direction(tmp_path):
         await engine.register_player("abc12345")
         with pytest.raises(WorldError):
             await engine.move("abc12345", "diagonal")
-        # 咖啡店 up 方向无路径
-        await engine.move("abc12345", "up")
+        # 沿大道一直往西走到尽头 (0,-5)，再往西无路
+        for _ in range(5):
+            await engine.move("abc12345", "left")
+        assert engine.get_player("abc12345").pos_key() == (DEFAULT_MAP_ID, 0, -5)
         with pytest.raises(WorldError, match="没有可走的路径"):
-            await engine.move("abc12345", "up")
+            await engine.move("abc12345", "left")
 
     _run(_scenario(tmp_path, fn))
 
 
 def test_parallel_paths_require_index(tmp_path):
-    """平行路径：广场 down 两条，不指定 path 报错；指定索引可达。"""
+    """平行路径：给广场 right 槽配两条路径，不指定 path 报错；指定索引可达。"""
 
     async def fn(engine: WorldEngine):
+        await engine.update_connection(
+            DEFAULT_MAP_ID,
+            0,
+            0,
+            "right",
+            enabled=True,
+            paths=[
+                {"label": "沿着大道向东", "targets": [{"row": 0, "col": 1}]},
+                {"label": "从后巷绕行", "targets": [{"row": 0, "col": 1}]},
+            ],
+        )
         await engine.register_player("abc12345")
         with pytest.raises(WorldError, match="多条路径"):
-            await engine.move("abc12345", "down")
-        scene = await engine.move("abc12345", "down", path=1)
-        assert (scene.row, scene.col) == (1, 0)
-        assert scene.location.name == "中央公园"
+            await engine.move("abc12345", "right")
+        scene = await engine.move("abc12345", "right", path=1)
+        assert (scene.row, scene.col) == (0, 1)
+        assert scene.location.name == "AstrBot大道"
         with pytest.raises(WorldError, match="路径索引"):
-            await engine.move("abc12345", "up", path=3)
+            await engine.move("abc12345", "left", path=3)
 
     _run(_scenario(tmp_path, fn))
 
 
 def test_hidden_target_in_scene(tmp_path):
-    """隐藏目标：迷雾森林"向左走" reveal_target=False → target_name None（???）。"""
+    """隐藏目标：reveal_target=False → target_name None（???）。"""
 
     async def fn(engine: WorldEngine):
+        await engine.update_connection(
+            DEFAULT_MAP_ID,
+            0,
+            0,
+            "up",
+            enabled=True,
+            paths=[
+                {
+                    "label": "沿着幽暗小径摸索",
+                    "reveal_target": False,
+                    "targets": [{"row": 5, "col": 1}],
+                }
+            ],
+        )
         await engine.register_player("abc12345", name="雾中人")
-        await engine.move("abc12345", "down", path=0)  # 广场 → 公园
-        await engine.move("abc12345", "down")  # 公园 → 迷雾森林
-        assert engine.get_player("abc12345").pos_key() == (DEFAULT_MAP_ID, 2, 0)
         scene = await engine.describe_scene("abc12345")
-        left = next(p for p in scene.paths if p.direction == "left")
-        right = next(p for p in scene.paths if p.direction == "right")
-        assert left.label == "向左走"
-        assert left.reveal_target is False
-        assert left.target_name is None
-        assert right.label == "向右走"
-        assert right.target_name == "迷雾深处"
+        up = next(p for p in scene.paths if p.direction == "up")
+        assert up.label == "沿着幽暗小径摸索"
+        assert up.reveal_target is False
+        assert up.target_name is None
         text = scene_to_text(scene)
         assert "???" in text
-        assert "向右走 → 迷雾深处" in text
+        assert "AstrBot大道" in text  # right 目标可见
+        moved = await engine.move("abc12345", "up")
+        assert (moved.row, moved.col) == (5, 1)
 
     _run(_scenario(tmp_path, fn))
 
 
 def test_move_weighted_accident(tmp_path):
-    """多目标加权：迷雾深处 down 主目标迷雾空地(1.0) + 意外迷雾森林(0.15)。
+    """多目标加权：给迷雾深处(5,1) down 配主目标(6,1,1.0) + 意外(5,0,0.15)。
 
     rand 注入：r*1.15 ≤ 1.0 → 主目标；> 1.0 → 意外。
     """
 
     async def to_depth(engine: WorldEngine):
+        await engine.update_connection(
+            DEFAULT_MAP_ID,
+            5,
+            1,
+            "down",
+            enabled=True,
+            paths=[
+                {
+                    "label": "继续摸索前进",
+                    "targets": [
+                        {"row": 6, "col": 1, "weight": 1.0},
+                        {"row": 5, "col": 0, "weight": 0.15},  # 脚下一滑跌回森林
+                    ],
+                }
+            ],
+        )
         await engine.register_player("abc12345")
-        await engine.move("abc12345", "down", path=0)
-        await engine.move("abc12345", "down")
-        await engine.move("abc12345", "right")
-        assert engine.get_player("abc12345").pos_key() == (DEFAULT_MAP_ID, 2, 1)
+        await engine.move("abc12345", "down")  # → 老路 (1,0)
+        await engine.move("abc12345", "down")  # → 老路 (2,0)
+        await engine.move("abc12345", "down")  # → 老路 (3,0)
+        await engine.move("abc12345", "down")  # → 迷雾森林 (4,0)
+        await engine.move("abc12345", "right")  # 森林无路 → 迷雾深处 (5,1)
+        assert engine.get_player("abc12345").pos_key() == (DEFAULT_MAP_ID, 5, 1)
 
     async def main_path():
         engine = make_engine(tmp_path / "world.db", rand=lambda: 0.5)
@@ -284,7 +325,7 @@ def test_move_weighted_accident(tmp_path):
         try:
             await to_depth(engine)
             scene = await engine.move("abc12345", "down")
-            assert (scene.row, scene.col) == (3, 1)
+            assert (scene.row, scene.col) == (6, 1)
         finally:
             await engine.terminate()
 
@@ -294,7 +335,7 @@ def test_move_weighted_accident(tmp_path):
         try:
             await to_depth(engine)
             scene = await engine.move("abc12345", "down")
-            assert (scene.row, scene.col) == (2, 0)  # 脚下一滑跌回森林
+            assert (scene.row, scene.col) == (5, 0)  # 脚下一滑跌回森林
         finally:
             await engine.terminate()
 
@@ -307,14 +348,14 @@ def test_move_explicit_target(tmp_path):
 
     async def fn(engine: WorldEngine):
         await engine.register_player("abc12345")
-        await engine.move("abc12345", "down", path=0)
-        await engine.move("abc12345", "down")
-        await engine.move("abc12345", "right")
-        scene = await engine.move("abc12345", "down", target={"row": 2, "col": 0})
-        assert (scene.row, scene.col) == (2, 0)  # 迷雾森林
-        await engine.move("abc12345", "right")  # 回迷雾深处
+        await engine.move("abc12345", "down")  # → 老路 (1,0)
+        await engine.move("abc12345", "down")  # → 老路 (2,0)
+        await engine.move("abc12345", "down")  # → 老路 (3,0)
+        await engine.move("abc12345", "down")  # → 迷雾森林 (4,0)
+        scene = await engine.move("abc12345", "right", target={"row": 5, "col": 1})
+        assert (scene.row, scene.col) == (5, 1)  # 迷雾深处
         with pytest.raises(WorldError, match="目标列表"):
-            await engine.move("abc12345", "down", target={"row": 0, "col": 0})
+            await engine.move("abc12345", "left", target={"row": 0, "col": 0})
 
     _run(_scenario(tmp_path, fn))
 
@@ -332,7 +373,7 @@ def test_dead_reference_path_hidden_and_untraversable(tmp_path):
             enabled=True,
             paths=[{"targets": [{"row": 99, "col": 99}]}],
         )
-        # 广场 right 槽替换为两条：一条通向 (20,20)，一条保留图书馆
+        # 广场 right 槽替换为两条：一条通向 (20,20)，一条回到大道
         await engine.update_connection(
             DEFAULT_MAP_ID,
             0,
@@ -340,7 +381,7 @@ def test_dead_reference_path_hidden_and_untraversable(tmp_path):
             "right",
             paths=[
                 {"label": "走向断崖", "targets": [{"row": 20, "col": 20}]},
-                {"label": "走向图书馆", "targets": [{"row": 0, "col": 1}]},
+                {"label": "回到大道", "targets": [{"row": 0, "col": 1}]},
             ],
         )
         await engine.register_player("abc12345")
@@ -406,7 +447,7 @@ def test_create_location_with_template(tmp_path):
     async def fn(engine: WorldEngine):
         await engine.create_template("tpl", "模板", map_id="", row=-1, col=0)
         loc = await engine.create_location(DEFAULT_MAP_ID, 8, 8, "", template_id="tpl")
-        assert loc.name == "街角咖啡店"
+        assert loc.name == "步行街·南街口"
         assert (
             loc.connections["down"].paths[0].targets[0].row,
             loc.connections["down"].paths[0].targets[0].col,
@@ -428,7 +469,7 @@ def test_create_location_with_template(tmp_path):
         loc3 = await engine.create_location(
             DEFAULT_MAP_ID, 8, 12, "   ", template_id="tpl"
         )
-        assert loc3.name == "街角咖啡店"
+        assert loc3.name == "步行街·南街口"
 
     _run(_scenario(tmp_path, fn))
 
@@ -460,13 +501,12 @@ def test_update_location(tmp_path):
 
 
 def test_time_aware_description(tmp_path):
-    """分时段描述：中央公园 06:00–18:00 白天 / 18:00–06:00 夜晚。"""
+    """分时段描述：小镇广场 06:00–18:00 白天 / 18:00–06:00 夜晚。"""
 
     async def day():
         engine = make_engine(tmp_path / "world_day.db", clock=fixed_clock(9))
         await engine.initialize()
         try:
-            await engine.move(AGENT_PLAYER_ID, "down", path=0)
             scene = await engine.describe_scene(AGENT_PLAYER_ID)
             assert "阳光" in scene.description
         finally:
@@ -476,9 +516,8 @@ def test_time_aware_description(tmp_path):
         engine = make_engine(tmp_path / "world_night.db", clock=fixed_clock(21))
         await engine.initialize()
         try:
-            await engine.move(AGENT_PLAYER_ID, "down", path=0)
             scene = await engine.describe_scene(AGENT_PLAYER_ID)
-            assert "暮色" in scene.description
+            assert "夜色" in scene.description
         finally:
             await engine.terminate()
 
@@ -490,16 +529,32 @@ def test_delete_location_cascades(tmp_path):
     """删除地块：主目标被删 → 整条路径移除；意外目标被删 → 仅移除该目标。"""
 
     async def fn(engine: WorldEngine):
-        await engine.delete_location(DEFAULT_MAP_ID, 2, 0)  # 迷雾森林
-        assert engine.get_location(DEFAULT_MAP_ID, 2, 0) is None
-        park = engine.get_location(DEFAULT_MAP_ID, 1, 0)
-        assert park.connections["down"].paths == []  # 主目标 → 整条路径移除
-        depth = engine.get_location(DEFAULT_MAP_ID, 2, 1)
-        assert depth.connections["left"].paths == []  # 主目标 → 整条路径移除
+        # 给迷雾深处 (5,1) down 加意外目标 (4,0)，便于验证意外移除
+        await engine.update_connection(
+            DEFAULT_MAP_ID,
+            5,
+            1,
+            "down",
+            enabled=True,
+            paths=[
+                {
+                    "label": "继续摸索前进",
+                    "targets": [
+                        {"row": 6, "col": 1, "weight": 1.0},
+                        {"row": 4, "col": 0, "weight": 0.15},
+                    ],
+                }
+            ],
+        )
+        await engine.delete_location(DEFAULT_MAP_ID, 4, 0)  # 迷雾森林
+        assert engine.get_location(DEFAULT_MAP_ID, 4, 0) is None
+        road = engine.get_location(DEFAULT_MAP_ID, 3, 0)
+        assert road.connections["down"].paths == []  # 主目标 → 整条路径移除
+        forest = engine.get_location(DEFAULT_MAP_ID, 5, 0)
+        assert forest.connections["up"].paths == []  # 主目标 → 整条路径移除
+        depth = engine.get_location(DEFAULT_MAP_ID, 5, 1)
         down = depth.connections["down"].paths[0]
-        assert [(t.row, t.col) for t in down.targets] == [(3, 1)]  # 意外 (2,0) 移除
-        clearing = engine.get_location(DEFAULT_MAP_ID, 3, 1)
-        assert clearing.connections["right"].paths == []
+        assert [(t.row, t.col) for t in down.targets] == [(6, 1)]  # 意外 (4,0) 移除
         with pytest.raises(WorldError):
             await engine.delete_location(DEFAULT_MAP_ID, 9, 9)
 
@@ -513,10 +568,10 @@ def test_delete_location_rejects_occupied(tmp_path):
         with pytest.raises(WorldError, match="有玩家"):
             await engine.delete_location(DEFAULT_MAP_ID, 0, 0)  # agent 在广场
         await engine.register_player("abc12345")
-        await engine.move("abc12345", "up")  # → 咖啡店 (-1,0)
+        await engine.move("abc12345", "up")  # → 步行街·南街口 (-1,0)
         with pytest.raises(WorldError, match="有玩家"):
             await engine.delete_location(DEFAULT_MAP_ID, -1, 0)
-        await engine.delete_location(DEFAULT_MAP_ID, 0, 1)  # 图书馆无玩家
+        await engine.delete_location(DEFAULT_MAP_ID, 0, 1)  # AstrBot大道无玩家
 
     _run(_scenario(tmp_path, fn))
 
@@ -525,16 +580,16 @@ def test_move_location_rewrites_references(tmp_path):
     """移动地块：自身坐标迁移 + 全图引用重写 + 该地块上玩家跟随。"""
 
     async def fn(engine: WorldEngine):
-        loc = await engine.move_location(DEFAULT_MAP_ID, -1, 0, 5, 5)  # 咖啡店
+        loc = await engine.move_location(DEFAULT_MAP_ID, -1, 0, 5, 5)  # 步行街·南街口
         assert (loc.row, loc.col) == (5, 5)
         plaza = engine.get_location(DEFAULT_MAP_ID, 0, 0)
         up = plaza.connections["up"].paths[0]
         assert (up.targets[0].row, up.targets[0].col) == (5, 5)  # 引用重写
-        # 玩家在咖啡店 → 跟随
+        # 玩家在步行街 → 跟随
         await engine.register_player("abc12345")
         await engine.move("abc12345", "up")
         assert engine.get_player("abc12345").pos_key() == (DEFAULT_MAP_ID, 5, 5)
-        # 占用格拒绝（公园 (1,0) 被占）
+        # 占用格拒绝（老路 (1,0) 被占）
         with pytest.raises(WorldError, match="已被占用"):
             await engine.move_location(DEFAULT_MAP_ID, 0, 0, 1, 0)
         with pytest.raises(WorldError):
@@ -616,28 +671,28 @@ def test_edit_persists_across_restart(tmp_path):
 
 
 def test_template_capture_and_apply(tmp_path):
-    """模板：从咖啡店捕获（同图目标转相对偏移），应用到空地块平移正确。"""
+    """模板：从步行街南街口捕获（同图目标转相对偏移），应用到空地块平移正确。"""
 
     async def fn(engine: WorldEngine):
         tpl = await engine.create_template(
-            "cafe_tpl", "咖啡店模板", map_id="", row=-1, col=0
+            "street_tpl", "步行街模板", map_id="", row=-1, col=0
         )
-        assert tpl.name == "咖啡店模板"
+        assert tpl.name == "步行街模板"
         down_t = tpl.data["connections"]["down"]["paths"][0]["targets"][0]
         right_t = tpl.data["connections"]["right"]["paths"][0]["targets"][0]
         assert down_t == {"dr": 1, "dc": 0, "weight": 1.0}  # → 广场
-        assert right_t == {"dr": 1, "dc": 1, "weight": 1.0}  # → 图书馆
+        assert right_t == {"dr": 0, "dc": 1, "weight": 1.0}  # → 知识库市场
 
-        loc = await engine.apply_template("cafe_tpl", map_id="", row=10, col=10)
+        loc = await engine.apply_template("street_tpl", map_id="", row=10, col=10)
         assert (loc.map_id, loc.row, loc.col) == (DEFAULT_MAP_ID, 10, 10)
-        assert loc.name == "街角咖啡店"
+        assert loc.name == "步行街·南街口"
         down = loc.connections["down"].paths[0]
         assert (down.targets[0].row, down.targets[0].col) == (11, 10)
         right = loc.connections["right"].paths[0]
-        assert (right.targets[0].row, right.targets[0].col) == (11, 11)
+        assert (right.targets[0].row, right.targets[0].col) == (10, 11)
 
         with pytest.raises(WorldError, match="已被占用"):
-            await engine.apply_template("cafe_tpl", map_id="", row=0, col=0)
+            await engine.apply_template("street_tpl", map_id="", row=0, col=0)
         with pytest.raises(WorldError):
             await engine.apply_template("ghost", map_id="", row=3, col=3)
 
