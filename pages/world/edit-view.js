@@ -353,6 +353,10 @@ function cellBadge(world, loc) {
 // 收集每个间隙的槽位路径条目（gapMap: key → {kind, row, col, stubs: []}）
 function collectGapStubs(world, byLoc) {
   const gapMap = new Map();
+  // 间隙锚点 = 间隙条左上角所在地块坐标（slotGapKey 的 key 中 row/col），
+  // 不是来源地块：up/left 的间隙位于来源地块的上一格/左一格。
+  const gapAnchor = (row, col, dir) =>
+    dir === "left" ? [row, col - 1] : dir === "up" ? [row - 1, col] : [row, col];
   const addStub = (key, r, c, stub) => {
     let entry = gapMap.get(key);
     if (!entry) {
@@ -377,7 +381,8 @@ function collectGapStubs(world, byLoc) {
           ? null
           : targetName(byLoc, t, world.spawn?.map_id);
         const stub = { loc, direction: dir, path, dead, adjacent, targetLabel };
-        addStub(slotGapKey(loc.row, loc.col, dir), loc.row, loc.col, stub);
+        const [anchorRow, anchorCol] = gapAnchor(loc.row, loc.col, dir);
+        addStub(slotGapKey(loc.row, loc.col, dir), anchorRow, anchorCol, stub);
       }
     }
   }
