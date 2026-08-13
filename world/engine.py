@@ -384,12 +384,12 @@ class WorldEngine:
         map_id = target.get("map_id", "")
         if not isinstance(map_id, str):
             raise WorldError("target 的 map_id 必须是字符串")
-        resolved = self.store.resolve_target(Target(map_id=map_id, row=row, col=col), from_map_id)
+        resolved = self.store.resolve_target(
+            Target(map_id=map_id, row=row, col=col), from_map_id
+        )
         if resolved is None:
             raise WorldError("目标坐标不可达")
-        listed = {
-            (r.map_id or from_map_id, r.row, r.col) for r in p.targets
-        }
+        listed = {(r.map_id or from_map_id, r.row, r.col) for r in p.targets}
         if (resolved.map_id, resolved.row, resolved.col) not in listed:
             raise WorldError("目标坐标不在该路径的目标列表中")
         return resolved
@@ -423,7 +423,11 @@ class WorldEngine:
                     loc = replace(loc, name=name)
             else:
                 name = _clean_required(name, "地块名称")
-                desc = parse_text_schedule(description) if description is not None else None
+                desc = (
+                    parse_text_schedule(description)
+                    if description is not None
+                    else None
+                )
                 loc = Location(
                     map_id=m,
                     row=row,
@@ -487,17 +491,19 @@ class WorldEngine:
                 new_paths: list[ConnectionPath] = []
                 for p in slot.paths:
                     main = self._resolve_main(p, loc.map_id)
-                    if main is not None and (
-                        main.map_id,
-                        main.row,
-                        main.col,
-                    ) == key:
+                    if (
+                        main is not None
+                        and (
+                            main.map_id,
+                            main.row,
+                            main.col,
+                        )
+                        == key
+                    ):
                         changed = True
                         continue  # 主目标被删 → 整条路径移除
                     kept = [
-                        t
-                        for t in p.targets
-                        if self._target_key(t, loc.map_id) != key
+                        t for t in p.targets if self._target_key(t, loc.map_id) != key
                     ]
                     if len(kept) != len(p.targets):
                         changed = True

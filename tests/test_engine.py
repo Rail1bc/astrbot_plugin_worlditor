@@ -29,7 +29,10 @@ from astrbot_plugin_worlditor.world.engine import (  # noqa: E402
     WorldError,
     scene_to_text,
 )
-from astrbot_plugin_worlditor.world.store import DEFAULT_MAP_ID, WorldStore  # noqa: E402
+from astrbot_plugin_worlditor.world.store import (  # noqa: E402
+    DEFAULT_MAP_ID,
+    WorldStore,
+)
 from astrbot_plugin_worlditor.world.v3model import Target  # noqa: E402
 
 SH_TZ = ZoneInfo("Asia/Shanghai")
@@ -111,8 +114,7 @@ def test_register_player_and_scene(tmp_path):
         data = scene.to_dict()
         assert data["location"]["name"] == "小镇广场"
         assert all(
-            {"direction", "path", "label", "reveal_target", "target_name"}
-            <= set(p)
+            {"direction", "path", "label", "reveal_target", "target_name"} <= set(p)
             for p in data["paths"]
         )
 
@@ -308,9 +310,7 @@ def test_move_explicit_target(tmp_path):
         await engine.move("abc12345", "down", path=0)
         await engine.move("abc12345", "down")
         await engine.move("abc12345", "right")
-        scene = await engine.move(
-            "abc12345", "down", target={"row": 2, "col": 0}
-        )
+        scene = await engine.move("abc12345", "down", target={"row": 2, "col": 0})
         assert (scene.row, scene.col) == (2, 0)  # 迷雾森林
         await engine.move("abc12345", "right")  # 回迷雾深处
         with pytest.raises(WorldError, match="目标列表"):
@@ -362,8 +362,14 @@ def test_target_resolution(tmp_path):
     async def fn(engine: WorldEngine):
         store = engine.store
         assert store.resolve_target(Target(map_id="", row=0, col=0), DEFAULT_MAP_ID)
-        assert store.resolve_target(Target(map_id="ghost", row=0, col=0), DEFAULT_MAP_ID) is None
-        assert store.resolve_target(Target(map_id="", row=99, col=99), DEFAULT_MAP_ID) is None
+        assert (
+            store.resolve_target(Target(map_id="ghost", row=0, col=0), DEFAULT_MAP_ID)
+            is None
+        )
+        assert (
+            store.resolve_target(Target(map_id="", row=99, col=99), DEFAULT_MAP_ID)
+            is None
+        )
 
     _run(_scenario(tmp_path, fn))
 
@@ -401,7 +407,10 @@ def test_create_location_with_template(tmp_path):
         await engine.create_template("tpl", "模板", map_id="", row=-1, col=0)
         loc = await engine.create_location(DEFAULT_MAP_ID, 8, 8, "", template_id="tpl")
         assert loc.name == "街角咖啡店"
-        assert (loc.connections["down"].paths[0].targets[0].row, loc.connections["down"].paths[0].targets[0].col) == (
+        assert (
+            loc.connections["down"].paths[0].targets[0].row,
+            loc.connections["down"].paths[0].targets[0].col,
+        ) == (
             9,
             8,
         )
@@ -428,15 +437,16 @@ def test_update_location(tmp_path):
     """更新地块：改 name/description、description 显式清空、不存在报错。"""
 
     async def fn(engine: WorldEngine):
-        loc = await engine.update_location(
-            DEFAULT_MAP_ID, 0, 0, name="小镇广场·新装"
-        )
+        loc = await engine.update_location(DEFAULT_MAP_ID, 0, 0, name="小镇广场·新装")
         assert loc.name == "小镇广场·新装"
         assert engine.get_location(DEFAULT_MAP_ID, 0, 0).name == "小镇广场·新装"
-        await engine.update_location(DEFAULT_MAP_ID, 0, 0, description="重新铺设的地砖。")
+        await engine.update_location(
+            DEFAULT_MAP_ID, 0, 0, description="重新铺设的地砖。"
+        )
         assert (
-            engine.get_location(DEFAULT_MAP_ID, 0, 0)
-            .description.resolve(datetime(2026, 8, 13, 12, 0, tzinfo=SH_TZ))
+            engine.get_location(DEFAULT_MAP_ID, 0, 0).description.resolve(
+                datetime(2026, 8, 13, 12, 0, tzinfo=SH_TZ)
+            )
             == "重新铺设的地砖。"
         )
         await engine.update_location(DEFAULT_MAP_ID, 0, 0, description=None)
@@ -644,10 +654,11 @@ def test_template_crud(tmp_path):
         tpl = await engine.update_template("tpl", name="广场模板")
         assert tpl.name == "广场模板"
         tpl2 = await engine.update_template("tpl", map_id="", row=-1, col=0)
-        assert (
-            tpl2.data["connections"]["down"]["paths"][0]["targets"][0]
-            == {"dr": 1, "dc": 0, "weight": 1.0}
-        )
+        assert tpl2.data["connections"]["down"]["paths"][0]["targets"][0] == {
+            "dr": 1,
+            "dc": 0,
+            "weight": 1.0,
+        }
         with pytest.raises(WorldError):
             await engine.update_template("tpl", map_id="", row=-1)  # 缺 col
         await engine.delete_template("tpl")

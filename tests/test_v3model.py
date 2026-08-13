@@ -7,9 +7,11 @@ from datetime import datetime
 import pytest
 
 from world.v3model import (
-    DIRECTIONS,
     DIR_OFFSETS,
+    DIRECTIONS,
     OPPOSITE_DIR,
+    ConnectionPath,
+    ConnectionSlot,
     TextSchedule,
     default_connections,
     location_to_dict,
@@ -22,7 +24,6 @@ from world.v3model import (
     parse_text_schedule,
     path_to_dict,
 )
-
 
 NOW = datetime(2026, 8, 13, 12, 0)
 
@@ -48,8 +49,16 @@ def test_period_selection():
     s = parse_text_schedule(
         {
             "periods": [
-                {"start": "06:00", "end": "18:00", "items": [{"text": "白天", "weight": 1}]},
-                {"start": "18:00", "end": "06:00", "items": [{"text": "夜晚", "weight": 1}]},
+                {
+                    "start": "06:00",
+                    "end": "18:00",
+                    "items": [{"text": "白天", "weight": 1}],
+                },
+                {
+                    "start": "18:00",
+                    "end": "06:00",
+                    "items": [{"text": "夜晚", "weight": 1}],
+                },
             ]
         }
     )
@@ -61,8 +70,16 @@ def test_cross_midnight_period():
     s = parse_text_schedule(
         {
             "periods": [
-                {"start": "22:00", "end": "02:00", "items": [{"text": "深夜", "weight": 1}]},
-                {"start": "02:00", "end": "22:00", "items": [{"text": "白天", "weight": 1}]},
+                {
+                    "start": "22:00",
+                    "end": "02:00",
+                    "items": [{"text": "深夜", "weight": 1}],
+                },
+                {
+                    "start": "02:00",
+                    "end": "22:00",
+                    "items": [{"text": "白天", "weight": 1}],
+                },
             ]
         }
     )
@@ -74,7 +91,15 @@ def test_cross_midnight_period():
 
 def test_end_0000_means_midnight():
     s = parse_text_schedule(
-        {"periods": [{"start": "08:00", "end": "00:00", "items": [{"text": "白天", "weight": 1}]}]}
+        {
+            "periods": [
+                {
+                    "start": "08:00",
+                    "end": "00:00",
+                    "items": [{"text": "白天", "weight": 1}],
+                }
+            ]
+        }
     )
     assert s.resolve(datetime(2026, 8, 13, 23, 0)) == "白天"
     assert s.resolve(datetime(2026, 8, 13, 7, 0)) == ""
@@ -82,7 +107,15 @@ def test_end_0000_means_midnight():
 
 def test_no_period_matches_returns_empty():
     s = parse_text_schedule(
-        {"periods": [{"start": "08:00", "end": "09:00", "items": [{"text": "X", "weight": 1}]}]}
+        {
+            "periods": [
+                {
+                    "start": "08:00",
+                    "end": "09:00",
+                    "items": [{"text": "X", "weight": 1}],
+                }
+            ]
+        }
     )
     assert s.resolve(datetime(2026, 8, 13, 12, 0)) == ""
 
@@ -94,7 +127,10 @@ def test_weighted_pick_with_injected_rand():
                 {
                     "start": "00:00",
                     "end": "24:00",
-                    "items": [{"text": "A", "weight": 1.0}, {"text": "B", "weight": 3.0}],
+                    "items": [
+                        {"text": "A", "weight": 1.0},
+                        {"text": "B", "weight": 3.0},
+                    ],
                 }
             ]
         }
@@ -144,8 +180,16 @@ def test_invalid_period_dropped():
     s = parse_text_schedule(
         {
             "periods": [
-                {"start": "25:00", "end": "24:00", "items": [{"text": "X", "weight": 1}]},
-                {"start": "00:00", "end": "24:00", "items": [{"text": "好", "weight": 1}]},
+                {
+                    "start": "25:00",
+                    "end": "24:00",
+                    "items": [{"text": "X", "weight": 1}],
+                },
+                {
+                    "start": "00:00",
+                    "end": "24:00",
+                    "items": [{"text": "好", "weight": 1}],
+                },
             ]
         }
     )
@@ -159,7 +203,10 @@ def test_text_schedule_round_trip():
                 {
                     "start": "06:00",
                     "end": "18:00",
-                    "items": [{"text": "白天", "weight": 2.0}, {"text": "阴天", "weight": 1.0}],
+                    "items": [
+                        {"text": "白天", "weight": 2.0},
+                        {"text": "阴天", "weight": 1.0},
+                    ],
                 }
             ]
         }
@@ -172,8 +219,16 @@ def test_overlap_first_match_wins():
     s = parse_text_schedule(
         {
             "periods": [
-                {"start": "00:00", "end": "24:00", "items": [{"text": "全天", "weight": 1}]},
-                {"start": "08:00", "end": "09:00", "items": [{"text": "早高峰", "weight": 1}]},
+                {
+                    "start": "00:00",
+                    "end": "24:00",
+                    "items": [{"text": "全天", "weight": 1}],
+                },
+                {
+                    "start": "08:00",
+                    "end": "09:00",
+                    "items": [{"text": "早高峰", "weight": 1}],
+                },
             ]
         }
     )
@@ -185,8 +240,18 @@ def test_overlap_first_match_wins():
 
 
 def test_direction_offsets():
-    assert DIR_OFFSETS == {"up": (-1, 0), "down": (1, 0), "left": (0, -1), "right": (0, 1)}
-    assert OPPOSITE_DIR == {"up": "down", "down": "up", "left": "right", "right": "left"}
+    assert DIR_OFFSETS == {
+        "up": (-1, 0),
+        "down": (1, 0),
+        "left": (0, -1),
+        "right": (0, 1),
+    }
+    assert OPPOSITE_DIR == {
+        "up": "down",
+        "down": "up",
+        "left": "right",
+        "right": "left",
+    }
 
 
 def test_location_offset():
@@ -221,7 +286,11 @@ def test_parse_location_full():
                         {
                             "label": {
                                 "periods": [
-                                    {"start": "00:00", "end": "24:00", "items": [{"text": "通往集市", "weight": 1}]}
+                                    {
+                                        "start": "00:00",
+                                        "end": "24:00",
+                                        "items": [{"text": "通往集市", "weight": 1}],
+                                    }
                                 ]
                             },
                             "reveal_target": False,
@@ -288,7 +357,15 @@ def test_location_round_trip():
                     "enabled": True,
                     "paths": [
                         {
-                            "label": {"periods": [{"start": "00:00", "end": "24:00", "items": [{"text": "山路", "weight": 1}]}]},
+                            "label": {
+                                "periods": [
+                                    {
+                                        "start": "00:00",
+                                        "end": "24:00",
+                                        "items": [{"text": "山路", "weight": 1}],
+                                    }
+                                ]
+                            },
                             "reveal_target": False,
                             "targets": [{"row": 2, "col": 5, "weight": 1}],
                         }
@@ -312,13 +389,25 @@ def test_location_to_dict_omits_empty_map_id():
 def test_path_round_trip():
     p = parse_path(
         {
-            "label": {"periods": [{"start": "00:00", "end": "24:00", "items": [{"text": "小路", "weight": 1}]}]},
+            "label": {
+                "periods": [
+                    {
+                        "start": "00:00",
+                        "end": "24:00",
+                        "items": [{"text": "小路", "weight": 1}],
+                    }
+                ]
+            },
             "reveal_target": False,
             "targets": [{"row": 1, "col": 2, "weight": 1}],
         }
     )
     p2 = parse_path(path_to_dict(p))
-    assert (p.reveal_target, p.targets[0].row, p.label.resolve(NOW)) == (False, 1, "小路")
+    assert (p.reveal_target, p.targets[0].row, p.label.resolve(NOW)) == (
+        False,
+        1,
+        "小路",
+    )
     assert p2 == p
 
 
@@ -362,6 +451,8 @@ def test_map_rejects_bad_input():
 
 
 def test_construct_slot_defaults():
-    slot = ConnectionSlot(direction="down", enabled=True, paths=[ConnectionPath(targets=[])])
+    slot = ConnectionSlot(
+        direction="down", enabled=True, paths=[ConnectionPath(targets=[])]
+    )
     assert slot.direction == "down" and slot.enabled
     assert slot.paths[0].reveal_target is True and slot.paths[0].label is None

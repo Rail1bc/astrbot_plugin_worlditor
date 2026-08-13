@@ -13,8 +13,8 @@ from .engine import (
 )
 from .store import DEFAULT_MAP_ID, WorldStore
 from .v3model import (
-    DIRECTIONS,
     DIR_OFFSETS,
+    DIRECTIONS,
     OPPOSITE_DIR,
     Location,
     Player,

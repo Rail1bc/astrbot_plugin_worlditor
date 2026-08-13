@@ -35,7 +35,10 @@ from astrbot_plugin_worlditor.world.engine import (  # noqa: E402
     AGENT_PLAYER_ID,
     WorldEngine,
 )
-from astrbot_plugin_worlditor.world.store import DEFAULT_MAP_ID, WorldStore  # noqa: E402
+from astrbot_plugin_worlditor.world.store import (  # noqa: E402
+    DEFAULT_MAP_ID,
+    WorldStore,
+)
 
 
 class FakePlugin(StateAPI, PlayAPI, EditAPI):
@@ -297,7 +300,10 @@ def test_location_create_handler(tmp_path):
         data = json.loads(resp.body)
         assert resp.status_code == 200
         assert data["location"]["name"] == "沙滩"
-        assert data["location"]["description"]["periods"][0]["items"][0]["text"] == "海边。"
+        assert (
+            data["location"]["description"]["periods"][0]["items"][0]["text"]
+            == "海边。"
+        )
         state = json.loads((await call_handler(plugin, "world_state")).body)
         assert len(state["locations"]) == 9
 
@@ -502,7 +508,10 @@ def test_template_handlers(tmp_path):
             plugin, "world_template_delete", body={"id": "cafe_tpl"}
         )
         assert json.loads(resp5.body)["ok"] is True
-        assert json.loads((await call_handler(plugin, "world_state")).body)["templates"] == []
+        assert (
+            json.loads((await call_handler(plugin, "world_state")).body)["templates"]
+            == []
+        )
         # 模板不存在 → 400
         resp6 = await call_handler(
             plugin, "world_template_apply", body={"id": "ghost", "row": 3, "col": 3}

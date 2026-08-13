@@ -64,9 +64,7 @@ _SEED_LOCATIONS: list[dict] = [
         "name": "小镇广场",
         "description": "小镇的中心广场，人来人往。东西南北都有街道延伸出去。",
         "connections": {
-            "up": [
-                {"label": "沿着北街走向咖啡店", "targets": [{"row": -1, "col": 0}]}
-            ],
+            "up": [{"label": "沿着北街走向咖啡店", "targets": [{"row": -1, "col": 0}]}],
             "down": [
                 {"label": "穿过南边的公园入口", "targets": [{"row": 1, "col": 0}]},
                 {"label": "沿排水渠绕行（捷径）", "targets": [{"row": 1, "col": 0}]},
@@ -74,9 +72,7 @@ _SEED_LOCATIONS: list[dict] = [
             "right": [
                 {"label": "沿着东街走向图书馆", "targets": [{"row": 0, "col": 1}]}
             ],
-            "left": [
-                {"label": "走向西边的杂货店", "targets": [{"row": 0, "col": -1}]}
-            ],
+            "left": [{"label": "走向西边的杂货店", "targets": [{"row": 0, "col": -1}]}],
         },
     },
     {
@@ -121,9 +117,7 @@ _SEED_LOCATIONS: list[dict] = [
         },
         "connections": {
             "up": [{"label": "回到广场", "targets": [{"row": 0, "col": 0}]}],
-            "down": [
-                {"label": "向南走进迷雾森林", "targets": [{"row": 2, "col": 0}]}
-            ],
+            "down": [{"label": "向南走进迷雾森林", "targets": [{"row": 2, "col": 0}]}],
         },
     },
     {
@@ -222,7 +216,9 @@ def _seed_connections(conns: dict) -> dict:
                         else None
                     ),
                     "reveal_target": p.get("reveal_target", True),
-                    "targets": [target_to_dict(Target(map_id="", **t)) for t in p["targets"]],
+                    "targets": [
+                        target_to_dict(Target(map_id="", **t)) for t in p["targets"]
+                    ],
                 }
                 for p in paths
             ],
@@ -327,7 +323,10 @@ class WorldStore:
             (
                 _SEED_MAP["id"],
                 _SEED_MAP["name"],
-                parse_text_schedule(_SEED_MAP["description"]).to_dict(),
+                json.dumps(
+                    parse_text_schedule(_SEED_MAP["description"]).to_dict(),
+                    ensure_ascii=False,
+                ),
                 _SEED_MAP["timezone"],
                 _SEED_MAP["spawn_row"],
                 _SEED_MAP["spawn_col"],
@@ -471,8 +470,6 @@ class WorldStore:
     async def delete_template(self, template_id: str) -> None:
         """删除一个模板。"""
         assert self._conn is not None
-        await self._conn.execute(
-            "DELETE FROM templates WHERE id = ?", (template_id,)
-        )
+        await self._conn.execute("DELETE FROM templates WHERE id = ?", (template_id,))
         await self._conn.commit()
         self.templates.pop(template_id, None)

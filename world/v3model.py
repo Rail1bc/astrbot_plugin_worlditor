@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import math
 import random
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any
 
 DIRECTIONS = ("up", "right", "down", "left")
 
@@ -56,7 +57,7 @@ def _parse_minutes(value: str) -> int:
     return minutes
 
 
-def _period_matches(period: "TextPeriod", minutes: int) -> bool:
+def _period_matches(period: TextPeriod, minutes: int) -> bool:
     start = _parse_minutes(period.start)
     end = _parse_minutes(period.end)
     if end == 0:
@@ -132,7 +133,9 @@ def parse_text_schedule(value: Any) -> TextSchedule:
     if value is None:
         return TextSchedule()
     if isinstance(value, str):
-        return TextSchedule(periods=[TextPeriod("00:00", "24:00", [TextItem(value, 1.0)])])
+        return TextSchedule(
+            periods=[TextPeriod("00:00", "24:00", [TextItem(value, 1.0)])]
+        )
     if not isinstance(value, dict):
         return TextSchedule()
     periods: list[TextPeriod] = []
@@ -175,9 +178,9 @@ def parse_text_schedule(value: Any) -> TextSchedule:
 class Target:
     """一个目标坐标（地块引用）：map_id 空 = 当前地图；weight 为意外抽取权重。"""
 
-    map_id: str = ""
     row: int
     col: int
+    map_id: str = ""
     weight: float = 1.0
 
 
@@ -273,7 +276,11 @@ def path_to_dict(p: ConnectionPath) -> dict[str, Any]:
 def parse_path(value: Any) -> ConnectionPath:
     if not isinstance(value, dict):
         return ConnectionPath()
-    label = parse_text_schedule(value.get("label")) if value.get("label") is not None else None
+    label = (
+        parse_text_schedule(value.get("label"))
+        if value.get("label") is not None
+        else None
+    )
     reveal = value.get("reveal_target", True)
     targets = []
     raw = value.get("targets")
@@ -377,7 +384,12 @@ def parse_map(value: Any) -> WorldMap:
         raise ValueError("地图数据必须是对象")
     id_ = value.get("id")
     name = value.get("name")
-    if not isinstance(id_, str) or not id_ or not isinstance(name, str) or not name.strip():
+    if (
+        not isinstance(id_, str)
+        or not id_
+        or not isinstance(name, str)
+        or not name.strip()
+    ):
         raise ValueError("地图 id 与名称不能为空")
     description = None
     if value.get("description") is not None:

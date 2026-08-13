@@ -89,9 +89,7 @@ class EditAPI:
             if "description" in payload:
                 kwargs["description"] = _description_value(payload)
             if "template_id" in payload:
-                kwargs["template_id"] = _req_str(
-                    payload, "template_id", "template_id"
-                )
+                kwargs["template_id"] = _req_str(payload, "template_id", "template_id")
             loc = await self.engine.create_location(**kwargs)
         except WorldError as e:
             return error_response(str(e), status_code=400)
@@ -115,7 +113,9 @@ class EditAPI:
         """删除地块（级联清除指向它的目标，拒绝删除有玩家占据的地块）。body: {map_id?, row, col}"""
         try:
             payload = await _body()
-            await self.engine.delete_location(**_coords(payload), **_map_kwargs(payload))
+            await self.engine.delete_location(
+                **_coords(payload), **_map_kwargs(payload)
+            )
         except WorldError as e:
             return error_response(str(e), status_code=400)
         return json_response({"ok": True})

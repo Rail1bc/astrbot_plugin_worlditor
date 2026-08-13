@@ -19,9 +19,7 @@ class StateAPI:
             player_id（可选）: 玩家 id；存在则附带该玩家场景，否则 ``player`` 为 null。
         """
         player_id = request.query.get("player_id", "").strip()
-        locations = [
-            location_to_dict(loc) for loc in self.engine.list_locations()
-        ]
+        locations = [location_to_dict(loc) for loc in self.engine.list_locations()]
         maps = [map_to_dict(m) for m in self.engine.list_maps()]
 
         player = None
@@ -55,7 +53,11 @@ class StateAPI:
             None,
         ) or next(iter(self.engine.list_maps()), None)
         spawn = (
-            {"map_id": spawn_map.id, "row": spawn_map.spawn_row, "col": spawn_map.spawn_col}
+            {
+                "map_id": spawn_map.id,
+                "row": spawn_map.spawn_row,
+                "col": spawn_map.spawn_col,
+            }
             if spawn_map
             else {"map_id": "", "row": 0, "col": 0}
         )
@@ -64,15 +66,14 @@ class StateAPI:
                 "maps": maps,
                 "locations": locations,
                 "templates": [
-                    {"id": t.id, "name": t.name}
-                    for t in self.engine.list_templates()
+                    {"id": t.id, "name": t.name} for t in self.engine.list_templates()
                 ],
                 "player": player,
                 "agent": agent,
                 "spawn": {
-                    "map_id": spawn[0],
-                    "row": spawn[1],
-                    "col": spawn[2],
+                    "map_id": spawn["map_id"],
+                    "row": spawn["row"],
+                    "col": spawn["col"],
                 },
             }
         )
