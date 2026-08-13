@@ -12,6 +12,8 @@
 
 破坏性变化（v2 → v3）：移动接口从按 exit_id 改为按「方向 + 路径索引」；地块坐标从可改改为只读（移动走专门工具）；出口并入地块、方向互异升格为结构约束（平行可选路径能力保留在「嵌套路径」结构中）。
 
+> 无迁移：solo 迭代、未公开，v2→v3 直接替换后端（旧 world.db 丢弃、播种世界重建），不保留 v2/v3 共存代码。
+
 ## 阶段
 
 ### Phase 1 — world/model.py：目标数据类 + TextSchedule
@@ -22,13 +24,13 @@
 - [ ] 时钟与 PRNG 注入点（`describe_scene` / 移动结算用，保证测试确定性）
 - [ ] 单测：时段命中（含跨午夜 22:00–02:00）、加权抽取、归一化、序列化往返
 
-### Phase 2 — world/store.py：新 schema + 迁移
+### Phase 2 — world/store.py：新 schema（无迁移，直接替换）
 
-- [ ] 新表 `maps` / `locations`(map_id,row,col 组合 PK) / `templates` / `world_meta`
-- [ ] `_migrate()` v2 → v3：建默认地图；layout 坐标 → (row,col)（无坐标 → firstFreeCell 兜底）；exits → 方向槽位路径（direction → 槽、同一方向多条出口 → 多条平行路径、to_id → 主目标、reveal_target / label → 路径字段）；agent 位置改写
+- [ ] 新表 `maps` / `locations`(map_id,row,col 组合 PK) / `templates` / `world_meta`；删除旧 `locations` / `exits` 表定义，schema 升 v3
+- [ ] **无 v2→v3 迁移**：solo 迭代、未公开，旧 world.db 数据直接丢弃；空库幂等播种新世界（小镇 + 迷雾区：平行路径 / 多目标加权 / 隐藏目标 / 环路）
 - [ ] 内存索引：`maps` / `loc_by_pos[(map_id,row,col)]`
 - [ ] 目标可解析性校验辅助（含跨图：map_id 空 = 当前图；目标地图/地块不存在 → 不可解析）
-- [ ] 迁移单测：老库 → 新库数据保真（地块、连接、reveal_target、agent 位置）
+- [ ] store 单测：建表 / 播种幂等 / 序列化往返
 
 ### Phase 3 — world/engine.py：动作重写
 
@@ -75,7 +77,6 @@
 | 风险 | 对策 |
 |---|---|
 | 移动地块引用重写遗漏（最易错） | 引擎原子操作 + 专项单测（全图引用扫描断言） |
-| 迁移保真（老世界数据不丢） | 迁移单测对比前后数据集；播种世界重建 |
 | 时间 / 随机导致测试不稳定 | 时钟与 PRNG 注入，单测全注入 |
 | 前端 / 引擎方向与坐标映射不一致 | 共享偏移常量；js-check + 手动测试重点覆盖 |
 | 路径顺序语义（路径索引 = 移动句柄） | world_look 每次重列路径索引；UI 排序时明确「重排路径 = 改可选项顺序」 |

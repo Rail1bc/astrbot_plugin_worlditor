@@ -220,7 +220,7 @@ class WorldMap:
 - **模板**：复制预设（CRUD + 应用到空地块），复制 name / description / connections 四槽（含平行路径列表）。目标复制策略：**同图目标存方向相对偏移**（放置时按地块位置平移）；**跨图目标存绝对 `map_id+坐标`** 原样复制。
 - **出度不再受限**：方向槽固定 4 个（方向互异升格为结构约束），但同方向允许多条平行路径、路径内多目标——总出度不限，恢复旧模型「同方向多出口 / +N」的可选路径能力（以「方向 + 路径索引」选择，对应旧 exit_id）。
 
-### 持久化与迁移（world/store.py）
+### 持久化（world/store.py）
 
 | 表 | 说明 |
 |---|---|
@@ -229,7 +229,7 @@ class WorldMap:
 | `templates(id TEXT PK, name, data_json)` | 地块模板（复制预设） |
 | `world_meta(key TEXT PK, value)` | `schema_version` + agent 位置 `(map_id,row,col)` |
 
-v2 → v3 迁移：建 `maps` 并插入默认地图；`locations` 的 layout 坐标 → `(row,col)`（无坐标 → firstFreeCell 兜底）；`exits` → 对应方向槽位的路径（`direction` → 槽，同一方向多条出口 → 多条平行路径，`to_id` → 主目标坐标，`reveal_target` 保留，label → 路径 label）；agent 位置改写。种子世界（小镇 + 迷雾区）按新模型重建——多边同目标 → 平行路径 / 多目标加权，隐藏目标 / 环路表达保留。
+**无 v2→v3 迁移**：solo 迭代、未公开，旧库（v2 `locations` / `exits` 表）数据直接丢弃；空库幂等播种新世界（小镇 + 迷雾区按新模型重建——平行路径 / 多目标加权，隐藏目标 / 环路表达保留）。
 
 ### 接口与工具变化
 
