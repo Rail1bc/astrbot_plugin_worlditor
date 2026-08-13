@@ -175,7 +175,7 @@ def test_state_handler(tmp_path):
         data = json.loads(resp.body)
         assert len(data["maps"]) == 1
         assert data["maps"][0]["id"] == DEFAULT_MAP_ID
-        assert len(data["locations"]) == 42
+        assert len(data["locations"]) == 41
         assert data["locations"][0]["connections"]["up"]["enabled"] is True
         assert data["templates"] == []
         player = data["player"]
@@ -334,7 +334,7 @@ def test_location_create_handler(tmp_path):
             == "海边。"
         )
         state = json.loads((await call_handler(plugin, "world_state")).body)
-        assert len(state["locations"]) == 43
+        assert len(state["locations"]) == 42
 
     _run(_scenario(tmp_path, fn))
 
@@ -413,7 +413,7 @@ def test_location_delete_handler(tmp_path):
         assert resp2.status_code == 400
         assert "有玩家" in json.loads(resp2.body)["message"]
         state = json.loads((await call_handler(plugin, "world_state")).body)
-        assert len(state["locations"]) == 41
+        assert len(state["locations"]) == 40
 
     _run(_scenario(tmp_path, fn))
 
@@ -503,16 +503,16 @@ def test_template_handlers(tmp_path):
         resp = await call_handler(
             plugin,
             "world_template_create",
-            body={"id": "street_tpl", "name": "步行街模板", "row": -1, "col": 0},
+            body={"id": "plaza_tpl", "name": "广场模板", "row": 0, "col": 0},
         )
-        assert json.loads(resp.body)["template"]["id"] == "street_tpl"
+        assert json.loads(resp.body)["template"]["id"] == "plaza_tpl"
         resp2 = await call_handler(
             plugin,
             "world_template_apply",
-            body={"id": "street_tpl", "row": 10, "col": 10},
+            body={"id": "plaza_tpl", "row": 10, "col": 10},
         )
         loc = json.loads(resp2.body)["location"]
-        assert loc["name"] == "步行街·南街口"
+        assert loc["name"] == "小镇广场"
         assert loc["connections"]["down"]["paths"][0]["targets"][0] == {
             "row": 11,
             "col": 10,
@@ -522,19 +522,19 @@ def test_template_handlers(tmp_path):
         resp3 = await call_handler(
             plugin,
             "world_template_apply",
-            body={"id": "street_tpl", "row": 0, "col": 0},
+            body={"id": "plaza_tpl", "row": 0, "col": 0},
         )
         assert resp3.status_code == 400
         # 改名
         resp4 = await call_handler(
-            plugin, "world_template_update", body={"id": "street_tpl", "name": "新模板"}
+            plugin, "world_template_update", body={"id": "plaza_tpl", "name": "新模板"}
         )
         assert json.loads(resp4.body)["template"]["name"] == "新模板"
         state = json.loads((await call_handler(plugin, "world_state")).body)
         assert state["templates"][0]["name"] == "新模板"
         # 删除
         resp5 = await call_handler(
-            plugin, "world_template_delete", body={"id": "street_tpl"}
+            plugin, "world_template_delete", body={"id": "plaza_tpl"}
         )
         assert json.loads(resp5.body)["ok"] is True
         assert (

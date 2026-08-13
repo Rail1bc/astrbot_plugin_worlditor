@@ -48,10 +48,12 @@ AGENT_POS_KEY = "agent_position"
 # 布局（单一默认地图；坐标 (row, col)：up=行-1 / down=行+1 / left=列-1 / right=列+1）：
 # - (0,0) 小镇广场（出生点）：北连步行街、南连老路，东西为 AstrBot大道。
 # - 步行街 (-1..-3, 0)：北端连 "开源" 小区（居民楼 + 街道，rows -4..-5）。
-# - AstrBot大道 (0, ±1..±5)：两侧为商铺（插件 / skill / 人格设定 / 知识库 /
-#   TTS / T2I 市场等）；东端 (0,5) 连 AstrBot大学，西端 (0,-5) 为死路。
+# - AstrBot大道 (0, ±1..±5)：两侧为商铺（插件市场 / Skill / 人格设定 / 知识库 /
+#   TTS / T2I 市场、旧书店），商铺只与大道双向连接（不与老路 / 步行街 / 其他商铺
+#   相连）；东端 (0,5) 连 AstrBot大学，西端 (0,-5) 为死路。
 # - 老路 (1..3, 0)：南端没入迷雾森林 (4,0)/(5,0)/(5,1)/(6,1)。
-# - 连接生成规则：相邻地块默认双向连接；森林地块无相邻地块的方向 → 目标 (5,1)。
+# - 连接生成规则：相邻地块默认双向连接；商铺（avenue_only）只连 row 0 大道、非大道
+#   地块也不连商铺；森林地块无相邻地块的方向 → 目标 (5,1)。
 
 _SEED_MAP = {
     "id": DEFAULT_MAP_ID,
@@ -257,51 +259,52 @@ _SEED_CELLS: list[dict] = [
     },
     {
         "row": 1,
-        "col": 1,
-        "name": "插件商店",
-        "description": "橱窗里摆满花花绿绿的插件盒子，店主热情地招呼每一位客人。",
-    },
-    {
-        "row": 1,
         "col": 2,
         "name": "Skill商店",
         "description": "店里挂着各种'技能'卷轴，店员说学会就能立刻上手。",
+        "avenue_only": True,
     },
     {
         "row": 1,
         "col": 3,
         "name": "人格设定市场",
         "description": "一栋造型奇特的建筑，门口排队的人都在小声讨论'人设'方案。",
+        "avenue_only": True,
     },
     {
         "row": -1,
         "col": 1,
         "name": "知识库市场",
         "description": "巨大的书库直通天花板，店员推着推车穿梭在书架间。",
+        "avenue_only": True,
     },
     {
         "row": -1,
         "col": 2,
         "name": "TTS市场",
         "description": "店里传来各种合成嗓音的试听，有人在挑选'说话的声音'。",
+        "avenue_only": True,
     },
     {
         "row": -1,
         "col": 3,
         "name": "T2I市场",
         "description": "橱窗里挂满色彩斑斓的画作，据说都是用'想象'生成的新画。",
+        "avenue_only": True,
     },
     {
         "row": 1,
         "col": -1,
         "name": "插件市场",
         "description": "大道西侧的一个批发市场，堆满了各种二手插件和零件。",
+        "avenue_only": True,
     },
     {
         "row": -1,
         "col": -1,
         "name": "旧书店",
         "description": "一家昏暗的旧书店，泛黄的书页散发着油墨香，老板在柜台后打盹。",
+        "avenue_only": True,
     },
     {
         "row": 0,
@@ -384,7 +387,8 @@ def _seed_connections(conns: dict) -> dict:
 
 
 def _build_seed_locations() -> list[Location]:
-    """由占位网格自动生成连接：相邻地块默认双向；森林无邻格方向 → 迷雾深处。"""
+    """由占位网格自动生成连接：相邻地块默认双向；商铺只连大道（row 0）；
+    森林无邻格方向 → 迷雾深处。"""
     cells: dict[tuple[int, int], dict] = {(s["row"], s["col"]): s for s in _SEED_CELLS}
     fr, fc = _FOREST_SPECIAL_POS
     out: list[Location] = []
@@ -395,6 +399,11 @@ def _build_seed_locations() -> list[Location]:
             nr, nc = row + dr, col + dc
             if (nr, nc) in cells:
                 neighbor = cells[(nr, nc)]
+                # 商铺只与大道（row 0）相连；两侧都排除——非大道地块也不连商铺
+                if meta.get("avenue_only") and nr != 0:
+                    continue
+                if neighbor.get("avenue_only") and row != 0:
+                    continue
                 conns[d] = [
                     {
                         "label": _default_path_label(meta["name"], neighbor["name"], d),

@@ -36,7 +36,7 @@ from astrbot_plugin_worlditor.world.store import (  # noqa: E402
 from astrbot_plugin_worlditor.world.v3model import Target  # noqa: E402
 
 SH_TZ = ZoneInfo("Asia/Shanghai")
-SEED_LOCATION_COUNT = 42
+SEED_LOCATION_COUNT = 41
 
 
 def fixed_clock(hour: int, minute: int = 0):
@@ -64,7 +64,7 @@ async def _scenario(tmp_path: Path, fn, rand=None):
 
 
 def test_seed_and_map_load(tmp_path):
-    """种子世界载入：42 地块、默认地图、agent 位于出生点 (0,0) 小镇广场。"""
+    """种子世界载入：41 地块、默认地图、agent 位于出生点 (0,0) 小镇广场。"""
 
     async def fn(engine: WorldEngine):
         assert len(engine.list_locations()) == SEED_LOCATION_COUNT
@@ -445,9 +445,9 @@ def test_create_location_with_template(tmp_path):
     """以模板为蓝本建地块：空 name 沿用模板名，显式 name 覆盖，模板缺失报错。"""
 
     async def fn(engine: WorldEngine):
-        await engine.create_template("tpl", "模板", map_id="", row=-1, col=0)
+        await engine.create_template("tpl", "模板", map_id="", row=0, col=0)
         loc = await engine.create_location(DEFAULT_MAP_ID, 8, 8, "", template_id="tpl")
-        assert loc.name == "步行街·南街口"
+        assert loc.name == "小镇广场"
         assert (
             loc.connections["down"].paths[0].targets[0].row,
             loc.connections["down"].paths[0].targets[0].col,
@@ -469,7 +469,7 @@ def test_create_location_with_template(tmp_path):
         loc3 = await engine.create_location(
             DEFAULT_MAP_ID, 8, 12, "   ", template_id="tpl"
         )
-        assert loc3.name == "步行街·南街口"
+        assert loc3.name == "小镇广场"
 
     _run(_scenario(tmp_path, fn))
 
@@ -671,28 +671,28 @@ def test_edit_persists_across_restart(tmp_path):
 
 
 def test_template_capture_and_apply(tmp_path):
-    """模板：从步行街南街口捕获（同图目标转相对偏移），应用到空地块平移正确。"""
+    """模板：从小镇广场捕获（同图目标转相对偏移），应用到空地块平移正确。"""
 
     async def fn(engine: WorldEngine):
         tpl = await engine.create_template(
-            "street_tpl", "步行街模板", map_id="", row=-1, col=0
+            "plaza_tpl", "广场模板", map_id="", row=0, col=0
         )
-        assert tpl.name == "步行街模板"
+        assert tpl.name == "广场模板"
         down_t = tpl.data["connections"]["down"]["paths"][0]["targets"][0]
         right_t = tpl.data["connections"]["right"]["paths"][0]["targets"][0]
-        assert down_t == {"dr": 1, "dc": 0, "weight": 1.0}  # → 广场
-        assert right_t == {"dr": 0, "dc": 1, "weight": 1.0}  # → 知识库市场
+        assert down_t == {"dr": 1, "dc": 0, "weight": 1.0}  # → 老路
+        assert right_t == {"dr": 0, "dc": 1, "weight": 1.0}  # → AstrBot大道
 
-        loc = await engine.apply_template("street_tpl", map_id="", row=10, col=10)
+        loc = await engine.apply_template("plaza_tpl", map_id="", row=10, col=10)
         assert (loc.map_id, loc.row, loc.col) == (DEFAULT_MAP_ID, 10, 10)
-        assert loc.name == "步行街·南街口"
+        assert loc.name == "小镇广场"
         down = loc.connections["down"].paths[0]
         assert (down.targets[0].row, down.targets[0].col) == (11, 10)
         right = loc.connections["right"].paths[0]
         assert (right.targets[0].row, right.targets[0].col) == (10, 11)
 
         with pytest.raises(WorldError, match="已被占用"):
-            await engine.apply_template("street_tpl", map_id="", row=0, col=0)
+            await engine.apply_template("plaza_tpl", map_id="", row=0, col=0)
         with pytest.raises(WorldError):
             await engine.apply_template("ghost", map_id="", row=3, col=3)
 
