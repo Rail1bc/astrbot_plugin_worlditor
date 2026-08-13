@@ -1,5 +1,5 @@
 // app.js — 世界编辑器页入口：装配与模式切换（编辑 / 玩家）
-// 单页双模式：编辑=全图可视化 + 编辑；玩家=当前地块 + 1 跳十字视图。
+// 单页双模式：编辑=全图可视化 + 编辑；玩家=当前地块 + 4 方向槽位平行路径。
 // 约束（沙箱 iframe）：无原生 alert/confirm、无同源 localStorage，纯 ES module 无构建。
 
 import { bindModalDismiss, openModal, state, $ } from "./shared.js";
@@ -24,15 +24,18 @@ async function refreshWorld() {
   render();
 }
 
-async function moveTo(exitId) {
-  const scene = await bridge.apiPost("world/move", {
-    player_id: state.playerId,
-    exit_id: exitId,
-  });
-  // scene 即新场景（SceneView.as_dict），原地更新本地 world.player 后整体重绘
+async function moveTo(direction, path) {
+  const body = { player_id: state.playerId, direction };
+  if (path != null) {
+    body.path = path; // 多条平行路径时指定槽内索引
+  }
+  const scene = await bridge.apiPost("world/move", body);
+  // scene 即新场景（SceneView.to_dict），原地更新本地 world.player 后整体重绘
   state.world.player = {
     ...state.world.player,
-    location_id: scene.location.id,
+    map_id: scene.map_id,
+    row: scene.row,
+    col: scene.col,
     location_name: scene.location.name,
     scene,
   };
@@ -47,8 +50,8 @@ function render() {
     renderPlay(state.world, moveTo);
   }
   const locEl = $("#loc-name");
-  if (state.world && state.world.player) {
-    locEl.textContent = state.world.player.location_name;
+  if (state.world?.player?.scene?.location?.name) {
+    locEl.textContent = state.world.player.scene.location.name;
   } else if (state.playerId) {
     locEl.textContent = "玩家已失效，请重新注册";
   } else {

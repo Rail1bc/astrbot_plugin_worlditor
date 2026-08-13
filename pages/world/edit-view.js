@@ -1,23 +1,36 @@
-// edit-view.js — 编辑模式：固定边界地图视图 + 右键拖动画布 + 缩略图
-// 地图 = 固定大小的网格（内容边界外任意方向再延伸 EDGE 个空地块）；地块是唯一「格」，
-// 连接不再以格呈现，而是绘制在地块间隙中的 SVG 连线：
-//   - a→b 单向（目标为方向相邻地块）：带箭头的连线
-//   - a↔b 双向（间隙两侧都存在普通出边）：无箭头的连线
-//   - a→b′（目标不是方向相邻地块）：带箭头虚线 + 末端小标记格，表示非常规连接
-//   相邻地块之间可同时出现两条连接（如 a→b 普通 + b→c′ 非常规），各自独立绘制。
-// 查看模式只显示已存在的地块与连接；编辑模式额外显示全部空地块（可点击新建）。
+// edit-view.js — 编辑模式：固定边界网格视图 + 右键拖动画布 + 缩略图
+// 地图 = 固定大小的网格（内容边界外任意方向再延伸 EDGE 个空地块）；地块身份 = (row, col)，
+// 直接落位在网格轨道上；连接不再是独立实体，而是每个地块 4 方向槽位的平行路径，绘制在
+// 地块间隙中的 SVG 连线上（一个槽位一条路径一根线）：
+//   - 路径主目标 = 该方向的相邻地块：连线跨过间隙到相邻地块（带箭头）
+//   - 主目标非相邻：带箭头虚线 + 末端小标记格（非常规连接）
+//   - 主目标不存在（死引用）：红色虚线 + 红标记格（区别于「显式禁用」——禁用的槽不画）
+//   同间隙内多条路径（含对侧槽位）沿间隙垂直方向均布错开，互不遮挡。
+// 查看模式只显示已存在的地块与连接；编辑模式额外显示全部空地块（可点击新建 / 从模板
+// 创建）；点击间隙空白编辑两侧槽位。坐标只读（移动走「移动地块」工具）。
 // 视图隐藏横竖滚动条：右键拖动 / 滚轮平移，Ctrl/⌘+滚轮以光标为中心缩放；右下角
 // 缩略图显示全图与当前视口范围（可收起/展开、可拖动，点击或拖动可移动视口）。
 
-import { $, state, DIR_OFFSETS, computePositions, cellKey } from "./shared.js";
+import {
+  $,
+  state,
+  DIR_OFFSETS,
+  locAt,
+  cellKey,
+  pathDead,
+  mainTarget,
+  targetName,
+  scheduleText,
+} from "./shared.js";
 import {
   locationViewEl,
   locationEditEl,
-  slotCreateEl,
-  blockViewEl,
-  blockEditEl,
-  exitViewEl,
-  exitEditEl,
+  cellCreateEl,
+  slotViewEl,
+  slotEditEl,
+  gapViewEl,
+  gapEditEl,
+  templatesEl,
 } from "./edit-forms.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -64,13 +77,6 @@ function clampScroll() {
   graphEl.scrollTop = clamp(graphEl.scrollTop, 0, maxScrollY());
 }
 
-const spawnBadgeText = (spawn, id) => {
-  if (spawn.agent === id && spawn.player === id) return "出生点";
-  if (spawn.agent === id) return "Agent 出生点";
-  if (spawn.player === id) return "玩家出生点";
-  return "";
-};
-
 // 编辑模式网格背景：每个地块周期画出四周边线（PITCH = CELL + GAP）
 const GRID_LINE = "color-mix(in srgb, var(--border) 30%, transparent)";
 const GRID_PATTERN = [
@@ -85,6 +91,7 @@ export function initEditView(options) {
   $("#edit-mode-edit").addEventListener("click", () => setEditMode("edit"));
   $("#btn-toggle-detail").addEventListener("click", toggleDetail);
   $("#detail-close").addEventListener("click", toggleDetail);
+  $("#btn-templates").addEventListener("click", selectTemplates);
 
   // 缩放控件
   $("#zoom-out").addEventListener("click", () => setZoom(zoom / ZOOM_STEP));
@@ -132,7 +139,7 @@ function setEditMode(mode) {
   if (hint) {
     hint.textContent =
       mode === "edit"
-        ? "编辑模式：点击空地块可新建；点击地块可创建连接；点击连接线可编辑；右键拖动平移，Ctrl/滚轮缩放。"
+        ? "编辑模式：点击空地块新建 / 点击连接线编辑槽位 / 点击间隙编辑两侧槽位 / 右键拖动平移，Ctrl+滚轮缩放。"
         : "查看模式：只读浏览，点击地块 / 连接查看详情；右键拖动平移地图。";
   }
   renderEdit(currentWorld);
@@ -147,50 +154,19 @@ function toggleDetail() {
   renderEdit(currentWorld);
 }
 
-// 出口所在间隙的键：right→h:row:col（col 与 col+1 之间的横向间隙），
+// 方向槽位所在的间隙键：right→h:row:col（col 与 col+1 之间的横向间隙），
 // left→h:row:col-1，down→v:col:row，up→v:col:row-1。
-export function exitBlockKey(sc, sr, dir) {
+export function slotGapKey(row, col, dir) {
   switch (dir) {
     case "right":
-      return `h:${sr}:${sc}`;
+      return `h:${row}:${col}`;
     case "left":
-      return `h:${sr}:${sc - 1}`;
+      return `h:${row}:${col - 1}`;
     case "down":
-      return `v:${sc}:${sr}`;
+      return `v:${row}:${col}`;
     default:
-      return `v:${sc}:${sr - 1}`;
+      return `v:${row - 1}:${col}`;
   }
-}
-
-// 解析间隙键 → 两侧地块 + 块内出口（导出供 edit-forms 的详情栏使用）
-export function blockInfo(world, key, pos, locAt) {
-  const [kind, a, b] = key.split(":");
-  let left = null;
-  let right = null;
-  let top = null;
-  let bottom = null;
-  if (kind === "h") {
-    const r = Number(a);
-    const c = Number(b);
-    left = locAt.get(cellKey(c, r)) || null;
-    right = locAt.get(cellKey(c + 1, r)) || null;
-  } else {
-    const c = Number(a);
-    const r = Number(b);
-    top = locAt.get(cellKey(c, r)) || null;
-    bottom = locAt.get(cellKey(c, r + 1)) || null;
-  }
-  const exits = [];
-  for (const e of world?.exits || []) {
-    const from = pos.get(e.from_id);
-    if (!from) {
-      continue;
-    }
-    if (exitBlockKey(from[0], from[1], e.direction) === key) {
-      exits.push(e);
-    }
-  }
-  return { key, kind, left, right, top, bottom, exits };
 }
 
 export function renderEdit(world) {
@@ -214,26 +190,22 @@ export function renderEdit(world) {
     return;
   }
 
-  const pos = computePositions(locations);
-  const locAt = new Map();
-  for (const l of locations) {
-    locAt.set(cellKey(pos.get(l.id)[0], pos.get(l.id)[1]), l);
-  }
+  const byLoc = locAt(locations);
 
   // 内容边界（实际地块范围）
   let wMinC = 0;
   let wMaxC = -1;
   let wMinR = 0;
   let wMaxR = -1;
-  for (const [, [c, r]] of pos) {
+  for (const l of locations) {
     if (wMaxC < 0) {
-      wMinC = wMaxC = c;
-      wMinR = wMaxR = r;
+      wMinC = wMaxC = l.col;
+      wMinR = wMaxR = l.row;
     } else {
-      if (c < wMinC) wMinC = c;
-      if (c > wMaxC) wMaxC = c;
-      if (r < wMinR) wMinR = r;
-      if (r > wMaxR) wMaxR = r;
+      if (l.col < wMinC) wMinC = l.col;
+      if (l.col > wMaxC) wMaxC = l.col;
+      if (l.row < wMinR) wMinR = l.row;
+      if (l.row > wMaxR) wMaxR = l.row;
     }
   }
 
@@ -283,12 +255,12 @@ export function renderEdit(world) {
   }
 
   // 连接层（SVG 连线，位于地块格之下）
-  canvas.appendChild(buildConnectionLayer(world, pos));
+  canvas.appendChild(buildConnectionLayer(world, byLoc));
 
   // 地块格：查看模式只渲染已存在地块；编辑模式另渲染全部空地块
   for (let c = minCol; c <= maxCol; c++) {
     for (let r = minRow; r <= maxRow; r++) {
-      const loc = locAt.get(cellKey(c, r));
+      const loc = byLoc.get(cellKey(c, r));
       if (!loc && state.editMode !== "edit") {
         continue;
       }
@@ -301,16 +273,20 @@ export function renderEdit(world) {
         cell.appendChild(nameEl);
         const idEl = document.createElement("div");
         idEl.className = "loc-cell-id";
-        idEl.textContent = loc.id;
+        idEl.textContent = `(${loc.row}, ${loc.col})`;
         cell.appendChild(idEl);
-        const badgeText = spawnBadgeText(world.spawn || {}, loc.id);
+        const badgeText = cellBadge(world, loc);
         if (badgeText) {
           const badge = document.createElement("span");
           badge.className = "spawn-badge";
           badge.textContent = badgeText;
           cell.appendChild(badge);
         }
-        if (state.selection?.kind === "location" && state.selection.id === loc.id) {
+        if (
+          state.selection?.kind === "location" &&
+          state.selection.row === loc.row &&
+          state.selection.col === loc.col
+        ) {
           cell.classList.add("selected");
         }
         cell.addEventListener("click", (e) => {
@@ -322,7 +298,7 @@ export function renderEdit(world) {
         cell.title = "空地（点击新建）";
         cell.addEventListener("click", (e) => {
           if (e.button !== 0) return;
-          selectSlot(c, r);
+          selectCell(r, c);
         });
       }
       renderCell(cell, (c - minCol) * PITCH, (r - minRow) * PITCH, CELL, CELL);
@@ -338,7 +314,7 @@ export function renderEdit(world) {
   }
 
   container.appendChild(canvas);
-  buildMinimap(pos);
+  buildMinimap(world, byLoc);
   applyCanvas();
   if (hadCanvas) {
     container.scrollLeft = clamp(saveLeft, 0, maxScrollX());
@@ -357,108 +333,101 @@ const renderCell = (el, x, y, w, h) => {
   canvasEl.appendChild(el);
 };
 
+function cellBadge(world, loc) {
+  const spawn = world.spawn;
+  if (spawn && loc.row === spawn.row && loc.col === spawn.col) {
+    return "出生点";
+  }
+  const agent = world.agent;
+  if (agent && loc.row === agent.row && loc.col === agent.col) {
+    return "Agent";
+  }
+  const player = world.player;
+  if (player && loc.row === player.row && loc.col === player.col) {
+    return "玩家";
+  }
+  return "";
+}
+
 // ---------- 连接层 ----------
-function buildConnectionLayer(world, pos) {
+// 收集每个间隙的槽位路径条目（gapMap: key → {kind, row, col, stubs: []}）
+function collectGapStubs(world, byLoc) {
+  const gapMap = new Map();
+  const addStub = (key, r, c, stub) => {
+    let entry = gapMap.get(key);
+    if (!entry) {
+      entry = { row: r, col: c, stubs: [] };
+      gapMap.set(key, entry);
+    }
+    entry.stubs.push(stub);
+  };
+  for (const loc of world.locations || []) {
+    for (const dir of ["up", "right", "down", "left"]) {
+      const slot = loc.connections?.[dir];
+      if (!slot || !slot.enabled || !Array.isArray(slot.paths) || slot.paths.length === 0) {
+        continue;
+      }
+      const [dr, dc] = DIR_OFFSETS[dir];
+      for (const path of slot.paths) {
+        const dead = pathDead(byLoc, path);
+        const t = mainTarget(path);
+        const adjacent =
+          !dead && !!t && t.row === loc.row + dr && t.col === loc.col + dc;
+        const targetLabel = dead
+          ? null
+          : targetName(byLoc, t, world.spawn?.map_id);
+        const stub = { loc, direction: dir, path, dead, adjacent, targetLabel };
+        addStub(slotGapKey(loc.row, loc.col, dir), loc.row, loc.col, stub);
+      }
+    }
+  }
+  return gapMap;
+}
+
+function buildConnectionLayer(world, byLoc) {
   const svg = document.createElementNS(SVG_NS, "svg");
   svg.setAttribute("viewBox", `0 0 ${mapW} ${mapH}`);
   svg.setAttribute("width", mapW);
   svg.setAttribute("height", mapH);
   svg.classList.add("conn-layer");
 
-  // 出口按所在间隙（key）分组
-  const gapMap = new Map();
-  for (const e of world.exits || []) {
-    const from = pos.get(e.from_id);
-    if (!from) {
-      continue;
-    }
-    const [dc, dr] = DIR_OFFSETS[e.direction] || DIR_OFFSETS.up;
-    const tc = from[0] + dc;
-    const tr = from[1] + dr;
-    const key = exitBlockKey(from[0], from[1], e.direction);
-    const destPos = pos.get(e.to_id);
-    // 目标主位不在出发方向的相邻格 → 非常规连接
-    const special = !destPos || destPos[0] !== tc || destPos[1] !== tr;
-    const side =
-      e.direction === "right"
-        ? "r"
-        : e.direction === "left"
-          ? "l"
-          : e.direction === "down"
-            ? "d"
-            : "u";
-    if (!gapMap.has(key)) {
-      gapMap.set(key, []);
-    }
-    gapMap.get(key).push({ exit: e, side, special });
-  }
+  const gapMap = collectGapStubs(world, byLoc);
 
-  // 横向间隙：c ∈ [minCol, maxCol-1]，r ∈ [minCol, maxCol]
+  // 横向间隙：c ∈ [minCol, maxCol-1]，r ∈ [minRow, maxRow]
   for (let c = bounds.minCol; c < bounds.maxCol; c++) {
     for (let r = bounds.minRow; r <= bounds.maxRow; r++) {
-      renderGap(svg, gapMap.get(`h:${r}:${c}`) || [], true, c, r);
+      const entry = gapMap.get(`h:${r}:${c}`);
+      if (entry) {
+        renderGap(svg, entry, true);
+      }
     }
   }
   // 纵向间隙：c ∈ [minCol, maxCol]，r ∈ [minRow, maxRow-1]
   for (let c = bounds.minCol; c <= bounds.maxCol; c++) {
     for (let r = bounds.minRow; r < bounds.maxRow; r++) {
-      renderGap(svg, gapMap.get(`v:${c}:${r}`) || [], false, c, r);
+      const entry = gapMap.get(`v:${r}:${c}`);
+      if (entry) {
+        renderGap(svg, entry, false);
+      }
     }
   }
   return svg;
 }
 
-// 间隙内连接线集合：两侧普通边合并为一条无箭头双向线；否则各自独立箭头；
-// 非常规连接始终独立（箭头 + 末端标记格）。
-function collectGapLines(group, isH) {
-  const norm = { r: [], l: [], d: [], u: [] };
-  const specials = [];
-  for (const item of group) {
-    if (item.special) {
-      specials.push(item);
-    } else {
-      norm[item.side].push(item);
-    }
-  }
-  const lines = [];
-  if (isH) {
-    if (norm.r.length > 0 && norm.l.length > 0) {
-      lines.push({ kind: "bi", exits: [...norm.r, ...norm.l] });
-    } else {
-      if (norm.r.length > 0) lines.push({ kind: "one", side: "r", exits: norm.r });
-      if (norm.l.length > 0) lines.push({ kind: "one", side: "l", exits: norm.l });
-    }
-  } else {
-    if (norm.d.length > 0 && norm.u.length > 0) {
-      lines.push({ kind: "bi", exits: [...norm.d, ...norm.u] });
-    } else {
-      if (norm.d.length > 0) lines.push({ kind: "one", side: "d", exits: norm.d });
-      if (norm.u.length > 0) lines.push({ kind: "one", side: "u", exits: norm.u });
-    }
-  }
-  for (const s of specials) {
-    lines.push({ kind: "special", side: s.side, exits: [s] });
-  }
-  return lines;
-}
-
-function renderGap(svg, group, isH, gapC, gapR) {
-  const lines = collectGapLines(group, isH);
-  if (lines.length === 0) {
-    return;
-  }
-  const key = isH ? `h:${gapR}:${gapC}` : `v:${gapC}:${gapR}`;
-  const blockSel = state.selection?.kind === "block" && state.selection.key === key;
-  const cx = (gapC - bounds.minCol) * PITCH;
-  const cy = (gapR - bounds.minRow) * PITCH;
-  lines.forEach((line, i) => {
-    drawLine(svg, line, isH, cx, cy, (i + 1) / (lines.length + 1), blockSel, key);
+// 在间隙内绘制槽位路径线；多条线沿垂直方向均布错开，互不遮挡
+function renderGap(svg, entry, isH) {
+  const { row, col, stubs } = entry;
+  const cx = (col - bounds.minCol) * PITCH;
+  const cy = (row - bounds.minRow) * PITCH;
+  stubs.forEach((stub, i) => {
+    drawStub(svg, stub, isH, cx, cy, (i + 1) / (stubs.length + 1));
   });
 }
 
-// 在间隙内绘制一条连接线；多条线沿垂直方向均布错开，互不遮挡
-function drawLine(svg, line, isH, cx, cy, frac, blockSel, gapKey) {
-  const perp = frac * CELL;
+function drawStub(svg, stub, isH, cx, cy, frac) {
+  const { loc, direction, path, dead, adjacent, targetLabel } = stub;
+  const source = isH ? (direction === "right" ? "l" : "r") : direction === "down" ? "t" : "b";
+  const perp = frac * GAP;
   let x1 = 0;
   let y1 = 0;
   let x2 = 0;
@@ -471,36 +440,22 @@ function drawLine(svg, line, isH, cx, cy, frac, blockSel, gapKey) {
     const gx1 = cx + CELL;
     const gx2 = cx + CELL + GAP;
     const mid = gx1 + GAP / 2;
-    if (line.kind === "bi" || (line.kind === "one" && line.side === "r")) {
+    if (source === "l") {
       x1 = gx1;
       y1 = y;
-      x2 = gx2;
+      x2 = adjacent ? gx2 : mid;
       y2 = y;
-      if (line.kind === "one") {
-        arrow = { x: x2, y, dir: "r" };
+      arrow = { x: x2, y, dir: "r" };
+      if (!adjacent) {
+        marker = { x: mid + MARKER_OFF, y };
       }
-    } else if (line.kind === "one") {
-      // side === "l"
+    } else {
       x1 = gx2;
       y1 = y;
-      x2 = gx1;
+      x2 = adjacent ? gx1 : mid;
       y2 = y;
       arrow = { x: x2, y, dir: "l" };
-    } else {
-      // 非常规：从出发侧指向间隙中心，末端小标记格
-      if (line.side === "r") {
-        x1 = gx1;
-        y1 = y;
-        x2 = mid;
-        y2 = y;
-        arrow = { x: mid, y, dir: "r" };
-        marker = { x: mid + MARKER_OFF, y };
-      } else {
-        x1 = gx2;
-        y1 = y;
-        x2 = mid;
-        y2 = y;
-        arrow = { x: mid, y, dir: "l" };
+      if (!adjacent) {
         marker = { x: mid - MARKER_OFF, y };
       }
     }
@@ -509,35 +464,22 @@ function drawLine(svg, line, isH, cx, cy, frac, blockSel, gapKey) {
     const gy1 = cy + CELL;
     const gy2 = cy + CELL + GAP;
     const mid = gy1 + GAP / 2;
-    if (line.kind === "bi" || (line.kind === "one" && line.side === "d")) {
+    if (source === "t") {
       x1 = x;
       y1 = gy1;
       x2 = x;
-      y2 = gy2;
-      if (line.kind === "one") {
-        arrow = { x, y: y2, dir: "d" };
+      y2 = adjacent ? gy2 : mid;
+      arrow = { x, y: y2, dir: "d" };
+      if (!adjacent) {
+        marker = { x, y: mid + MARKER_OFF };
       }
-    } else if (line.kind === "one") {
-      // side === "u"
+    } else {
       x1 = x;
       y1 = gy2;
       x2 = x;
-      y2 = gy1;
+      y2 = adjacent ? gy1 : mid;
       arrow = { x, y: y2, dir: "u" };
-    } else {
-      if (line.side === "d") {
-        x1 = x;
-        y1 = gy1;
-        x2 = x;
-        y2 = mid;
-        arrow = { x, y: mid, dir: "d" };
-        marker = { x, y: mid + MARKER_OFF };
-      } else {
-        x1 = x;
-        y1 = gy2;
-        x2 = x;
-        y2 = mid;
-        arrow = { x, y: mid, dir: "u" };
+      if (!adjacent) {
         marker = { x, y: mid - MARKER_OFF };
       }
     }
@@ -545,14 +487,18 @@ function drawLine(svg, line, isH, cx, cy, frac, blockSel, gapKey) {
 
   const g = document.createElementNS(SVG_NS, "g");
   g.classList.add("conn-line");
-  if (line.kind === "special") {
+  if (dead) {
+    g.classList.add("conn-dead");
+  } else if (!adjacent) {
     g.classList.add("conn-special");
   }
-  if (blockSel) {
-    g.classList.add("selected");
-  }
   const sel = state.selection;
-  if (sel?.kind === "exit" && line.exits.some((item) => sel.id === item.exit.id)) {
+  if (
+    sel?.kind === "slot" &&
+    sel.row === loc.row &&
+    sel.col === loc.col &&
+    sel.direction === direction
+  ) {
     g.classList.add("selected");
   }
 
@@ -579,19 +525,14 @@ function drawLine(svg, line, isH, cx, cy, frac, blockSel, gapKey) {
     g.appendChild(rect);
   }
 
-  // 单条连接 → 点击直接选中该出口；多条合并 → 选中整个间隙
-  const singleExit = line.exits.length === 1 ? line.exits[0].exit : null;
   g.addEventListener("click", (event) => {
     if (event.button !== 0) return;
     event.stopPropagation();
-    if (singleExit) {
-      selectExit(singleExit.id);
-    } else {
-      selectBlock(gapKey);
-    }
+    selectSlot(loc.row, loc.col, direction);
   });
+  const targetText = targetLabel || "（死引用：目标缺失）";
   const title = document.createElementNS(SVG_NS, "title");
-  title.textContent = line.exits.map((item) => item.exit.label).join(" / ");
+  title.textContent = `${scheduleText(path.label) || "（无标签）"} → ${targetText}`;
   g.appendChild(title);
   svg.appendChild(g);
 }
@@ -749,7 +690,7 @@ function applyCanvas() {
   }
 }
 
-// 编辑模式点击网格背景 / 空白区域 → 就近槽位新建地块
+// 编辑模式点击网格背景 → 命中地块 / 空地块 / 间隙（两侧槽位）
 function onCanvasClick(event) {
   if (state.editMode !== "edit" || event.button !== 0) {
     return;
@@ -763,12 +704,38 @@ function onCanvasClick(event) {
   const rect = graphEl.getBoundingClientRect();
   const bx = (event.clientX - rect.left + graphEl.scrollLeft) / zoom;
   const by = (event.clientY - rect.top + graphEl.scrollTop) / zoom;
-  const c = bounds.minCol + Math.floor(bx / PITCH);
-  const r = bounds.minRow + Math.floor(by / PITCH);
-  if (c < bounds.minCol || c > bounds.maxCol || r < bounds.minRow || r > bounds.maxRow) {
+  const px = bounds.minCol + Math.floor(bx / PITCH);
+  const py = bounds.minRow + Math.floor(by / PITCH);
+  if (px < bounds.minCol || px > bounds.maxCol || py < bounds.minRow || py > bounds.maxRow) {
     return;
   }
-  selectSlot(c, r);
+  const lx = bx - (px - bounds.minCol) * PITCH;
+  const ly = by - (py - bounds.minRow) * PITCH;
+  const inCellX = lx < CELL;
+  const inCellY = ly < CELL;
+  if (inCellX && inCellY) {
+    // 地块轨道：命中已有地块 → 详情；否则新建
+    const loc = byLocAt(px, py);
+    if (loc) {
+      selectLocation(loc);
+    } else {
+      selectCell(py, px);
+    }
+  } else if (!inCellX) {
+    selectGap(`h:${py}:${px}`); // 横向间隙
+  } else {
+    selectGap(`v:${py}:${px}`); // 纵向间隙（角落命中横向间隙，忽略）
+  }
+}
+
+function byLocAt(col, row) {
+  const locations = currentWorld?.locations || [];
+  for (const l of locations) {
+    if (l.col === col && l.row === row) {
+      return l;
+    }
+  }
+  return null;
 }
 
 function updateZoomPct() {
@@ -779,7 +746,7 @@ function updateZoomPct() {
 }
 
 // ---------- 缩略图 ----------
-function buildMinimap(pos) {
+function buildMinimap(world, byLoc) {
   if (minimapEl) {
     minimapEl.remove();
     minimapEl = null;
@@ -840,10 +807,10 @@ function buildMinimap(pos) {
   bg.classList.add("minimap-bg");
   svg.appendChild(bg);
 
-  for (const [, [c, r]] of pos) {
+  for (const loc of byLoc.values()) {
     const dot = document.createElementNS(SVG_NS, "rect");
-    dot.setAttribute("x", (c - bounds.minCol) * PITCH + 2);
-    dot.setAttribute("y", (r - bounds.minRow) * PITCH + 2);
+    dot.setAttribute("x", (loc.col - bounds.minCol) * PITCH + 2);
+    dot.setAttribute("y", (loc.row - bounds.minRow) * PITCH + 2);
     dot.setAttribute("width", CELL - 4);
     dot.setAttribute("height", CELL - 4);
     dot.setAttribute("rx", 3);
@@ -949,22 +916,27 @@ function updateMinimap() {
 
 // ---------- 选择与详情栏 ----------
 function selectLocation(loc) {
-  state.selection = { kind: "location", id: loc.id };
+  state.selection = { kind: "location", row: loc.row, col: loc.col };
   renderEdit(currentWorld);
 }
 
-function selectSlot(col, row) {
-  state.selection = { kind: "slot", col, row };
+function selectCell(row, col) {
+  state.selection = { kind: "cell", row, col };
   renderEdit(currentWorld);
 }
 
-function selectBlock(key) {
-  state.selection = { kind: "block", key };
+function selectSlot(row, col, direction) {
+  state.selection = { kind: "slot", row, col, direction };
   renderEdit(currentWorld);
 }
 
-function selectExit(id) {
-  state.selection = { kind: "exit", id };
+function selectGap(key) {
+  state.selection = { kind: "gap", key };
+  renderEdit(currentWorld);
+}
+
+function selectTemplates() {
+  state.selection = { kind: "templates" };
   renderEdit(currentWorld);
 }
 
@@ -979,10 +951,8 @@ function renderPanel(world) {
 
   const bus = {
     onSubmit: () => onMutate(),
-    onCreatedLocation: (id) => {
-      state.selection = { kind: "location", id };
-    },
-    onSelectExit: (id) => selectExit(id),
+    onSelectSlot: (row, col, direction) => selectSlot(row, col, direction),
+    onSelectTemplates: () => selectTemplates(),
   };
 
   const sel = state.selection;
@@ -993,46 +963,48 @@ function renderPanel(world) {
   }
 
   const locations = (world && world.locations) || [];
-  const exits = (world && world.exits) || [];
-  const byId = new Map(locations.map((l) => [l.id, l]));
-  const pos = computePositions(locations);
-  const locAt = new Map();
-  for (const l of locations) {
-    locAt.set(cellKey(pos.get(l.id)[0], pos.get(l.id)[1]), l);
-  }
+  const byLoc = locAt(locations);
 
   if (sel.kind === "location") {
-    const loc = byId.get(sel.id);
+    const loc = byLoc.get(cellKey(sel.col, sel.row));
     $("#detail-title").textContent = "地块";
     if (!loc) {
       body.appendChild(hintEl("该地块已不存在。"));
       return;
     }
-    const exitsFrom = exits.filter((e) => e.from_id === loc.id);
     body.appendChild(
       state.editMode === "edit"
-        ? locationEditEl(loc, exitsFrom, byId, bus, pos)
-        : locationViewEl(loc, exitsFrom, byId, bus)
+        ? locationEditEl(loc, byLoc, world, bus)
+        : locationViewEl(loc, byLoc, bus)
     );
-  } else if (sel.kind === "slot") {
+  } else if (sel.kind === "cell") {
     $("#detail-title").textContent = "新建地块";
-    body.appendChild(slotCreateEl(locations, sel.col, sel.row, byId, bus));
-  } else if (sel.kind === "block") {
-    $("#detail-title").textContent = "连接";
-    const info = blockInfo(world, sel.key, pos, locAt);
-    body.appendChild(
-      state.editMode === "edit" ? blockEditEl(info, byId, bus) : blockViewEl(info, byId, bus)
-    );
-  } else if (sel.kind === "exit") {
-    const exit = exits.find((e) => e.id === sel.id);
-    $("#detail-title").textContent = "出口";
-    if (!exit) {
-      body.appendChild(hintEl("该出口已不存在。"));
+    body.appendChild(cellCreateEl(world, sel.row, sel.col, bus));
+  } else if (sel.kind === "slot") {
+    const loc = byLoc.get(cellKey(sel.col, sel.row));
+    $("#detail-title").textContent = "连接槽位";
+    if (!loc) {
+      body.appendChild(hintEl("该地块已不存在。"));
+      return;
+    }
+    const slot = loc.connections?.[sel.direction];
+    if (!slot) {
+      body.appendChild(hintEl("该方向槽位已不存在。"));
       return;
     }
     body.appendChild(
-      state.editMode === "edit" ? exitEditEl(exit, byId, bus) : exitViewEl(exit, byId, bus)
+      state.editMode === "edit"
+        ? slotEditEl(loc, sel.direction, slot, bus)
+        : slotViewEl(loc, sel.direction, slot, byLoc, bus)
     );
+  } else if (sel.kind === "gap") {
+    $("#detail-title").textContent = "间隙两侧槽位";
+    body.appendChild(
+      state.editMode === "edit" ? gapEditEl(world, sel.key, bus) : gapViewEl(world, sel.key, bus)
+    );
+  } else if (sel.kind === "templates") {
+    $("#detail-title").textContent = "地块模板";
+    body.appendChild(templatesEl(world, bus));
   }
 }
 

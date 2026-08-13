@@ -7,24 +7,24 @@ export const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 // 跨模块共享状态（app.js 写入，视图模块读取）
 export const state = {
   playerId: null,
-  world: null, // { locations, exits, player, agent, spawn }
+  world: null, // { maps, locations, templates, player, agent, spawn }
   mode: "edit", // "edit" | "play"
   editMode: "edit", // 编辑视图子模式："view"（只读）| "edit"（表单 + 创建）
-  selection: null, // 详情栏选中项：{kind:"location"|"slot"|"block"|"exit", ...}
+  selection: null, // 详情栏选中项：{kind:"location"|"cell"|"slot"|"gap"|"templates", ...}
   detailOpen: true, // 详情栏是否展开
 };
 
-// ---------- 网格坐标（编辑视图交替网格表格） ----------
-// 表格轨道：奇数轨 = 地块（正方形），偶数轨 = 连接块（长方形）/ 占位小格；
-// 地块主位 = layout 整数坐标（col=x、row=y），表位 = 2*(坐标-min)+1。
-
+// ---------- 坐标与方向（与引擎 world/v3model.py 常量一致） ----------
+// 地块身份 = (map_id, row, col)。网格：整数 (row, col)，col 向右、row 向下。
 export const DIRECTIONS = ["up", "right", "down", "left"];
 export const DIR_LABELS = { up: "上", right: "右", down: "下", left: "左" };
+// 方向 ↔ 坐标偏移（行, 列）：up=行-1 / down=行+1 / left=列-1 / right=列+1。
+// 与引擎 DIR_OFFSETS 一致。
 export const DIR_OFFSETS = {
-  up: [0, -1],
-  right: [1, 0],
-  down: [0, 1],
-  left: [-1, 0],
+  up: [-1, 0],
+  down: [1, 0],
+  left: [0, -1],
+  right: [0, 1],
 };
 export const OPPOSITE_DIR = {
   up: "down",
@@ -35,47 +35,42 @@ export const OPPOSITE_DIR = {
 
 export const cellKey = (col, row) => `${col},${row}`;
 
-// 计算每个地块的主位：layout 整数坐标优先，缺坐标的确定性兜底到首个空闲格
-export function computePositions(locations) {
-  const pos = new Map(); // id -> [col, row]
-  const occupied = new Set();
-  for (const l of locations || []) {
-    if (l.layout && Number.isFinite(l.layout.x) && Number.isFinite(l.layout.y)) {
-      const cell = [Math.round(l.layout.x), Math.round(l.layout.y)];
-      pos.set(l.id, cell);
-      occupied.add(cellKey(cell[0], cell[1]));
-    }
+// 地块 → (col,row) 索引（v3 身份即坐标，无需 layout 兜底）
+export function locAt(locations) {
+  const m = new Map();
+  for (const loc of locations || []) {
+    m.set(cellKey(loc.col, loc.row), loc);
   }
-  for (const l of locations || []) {
-    if (!pos.has(l.id)) {
-      const cell = firstFreeCell(occupied);
-      pos.set(l.id, cell);
-      occupied.add(cellKey(cell[0], cell[1]));
-    }
-  }
-  return pos;
+  return m;
 }
 
-// 首个空闲格：优先候选列表，否则从 (0,0) 向外环形扫描
-export function firstFreeCell(occupied, prefers = []) {
-  for (const [c, r] of prefers) {
-    if (!occupied.has(cellKey(c, r))) {
-      return [c, r];
-    }
+// ---------- 场景 / 路径解析辅助 ----------
+// 解析目标坐标到地块名；不可解析（目标地图非当前图 / 地块不存在）返回 null（= 死引用）。
+export function targetName(byLoc, target, defaultMapId = "") {
+  if (target.map_id && target.map_id !== defaultMapId) {
+    return null;
   }
-  for (let radius = 0; radius < 50; radius++) {
-    for (let dc = -radius; dc <= radius; dc++) {
-      for (let dr = -radius; dr <= radius; dr++) {
-        if (Math.max(Math.abs(dc), Math.abs(dr)) !== radius) {
-          continue;
-        }
-        if (!occupied.has(cellKey(dc, dr))) {
-          return [dc, dr];
-        }
-      }
-    }
-  }
-  return [0, 0];
+  const loc = byLoc.get(cellKey(target.col, target.row));
+  return loc ? loc.name : null;
+}
+
+// 路径主目标名（targets[0]）；无目标 → null
+export function mainTarget(path) {
+  return Array.isArray(path.targets) && path.targets.length > 0
+    ? path.targets[0]
+    : null;
+}
+
+export function pathDead(byLoc, path) {
+  const t = mainTarget(path);
+  return !t || targetName(byLoc, t) === null;
+}
+
+// 时段文本取首时段首条（编辑视图无时钟，仅展示用）
+export function scheduleText(schedule) {
+  const p = schedule?.periods?.[0];
+  const it = p?.items?.[0];
+  return it?.text ?? "";
 }
 
 const bridge = window.AstrBotPluginPage;

@@ -305,6 +305,9 @@ body {
 
 .exit-item-dir {
   flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   font-size: 11px;
   color: var(--text-dim);
 }
@@ -924,4 +927,217 @@ body {
     width: 100%;
     max-height: 38%;
   }
+}
+
+/* ---------- v3：死引用 / 槽位 / 编辑器样式 ---------- */
+
+/* 死引用路径（主目标缺失）：红色虚线 + 红标记格，区别于显式禁用（不画） */
+.conn-line.conn-dead line {
+  stroke: var(--danger);
+  stroke-dasharray: 4 3;
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.conn-line.conn-dead polygon {
+  fill: var(--danger);
+}
+
+.conn-line.conn-dead .spec-marker {
+  stroke: var(--danger);
+  stroke-width: 2;
+  fill: color-mix(in srgb, var(--danger) 20%, var(--panel));
+}
+
+.conn-line.conn-dead:hover line,
+.conn-line.conn-dead:hover polygon,
+.conn-line.conn-dead:hover .spec-marker {
+  stroke: var(--danger);
+  fill: var(--danger);
+}
+
+/* 详情栏：死引用红色文字 */
+.text-dead {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+/* 小按钮 / 危险按钮 / 紧凑输入 / 横排表单 */
+.btn-mini {
+  padding: 2px 8px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+
+.btn-danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #ffffff;
+}
+
+.form-input-sm {
+  padding: 4px 8px;
+  font-size: 13px;
+  border-radius: 6px;
+}
+
+.form-row {
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* ---------- TextSchedule 编辑器 ---------- */
+.schedule-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.schedule-editor .btn-mini {
+  align-self: flex-start;
+}
+
+.schedule-advanced {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.schedule-periods {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.schedule-period {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg);
+}
+
+.schedule-period-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.schedule-period-head .form-input-sm {
+  width: 64px;
+}
+
+.schedule-items {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.schedule-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.schedule-item .form-input {
+  flex: 1;
+}
+
+/* ---------- 目标列表编辑器 ---------- */
+.targets-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.target-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.target-row .form-input-sm {
+  width: 52px;
+}
+
+/* ---------- 路径编辑器 / 路径块 ---------- */
+.path-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.path-block {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg);
+}
+
+.path-block-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.path-block-title {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+/* ---------- 玩家视图：方向槽位格 + 平行路径按钮 ---------- */
+.play-dir-label {
+  font-size: 10px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.play-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  max-width: 100%;
+  max-height: 58%;
+  overflow-y: auto;
+}
+
+.play-path-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+  text-align: center;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.play-path-btn:hover {
+  border-color: var(--accent);
+}
+
+.play-path-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-dim);
+}
+
+.play-path-target {
+  font-weight: 600;
+  overflow-wrap: anywhere;
 }

@@ -1,17 +1,17 @@
-// play-view.js — 玩家模式：当前地块 + 有出边连接的 1 跳目标
-// 地图 div（#play-map）：中间是只含地块名称的小块，上下左右直接连接 1 跳可达地块
-// （十字布局，目标格只显示地块名；无连接的槽位不可见；所有边一视同仁，无箭头简单
-// 连线、不查反向边、不画方向；隐藏目标显示 ???；无回环——自环出口照常占槽位）；
-// 地图 div 动态填充剩余空间，棋盘正方形取「地图区域的宽/高较小值」并随区域变化
-// 自适应（ResizeObserver）；平级信息 div（#play-info）：当前地块说明文本、内部滚动；
-// 违规地图（出度>4 或同方向冲突）折叠「+N」展开全部出口列表。
+// play-view.js — 玩家模式：当前地块 + 4 方向槽位（每槽平行路径逐一列出可选）
+// 地图 div（#play-map）：中间是只含地块名称的小块，上/右/下/左各放一个方向槽位格，
+// 格内是该方向所有可选路径的按钮列表（每条显示 label + 主目标名，隐藏目标显示 ???）；
+// 无路径的方向槽位不渲染；槽位格收缩到内容大小并居中，长名在格内换行；目标名只取
+// scene.paths 的 target_name，绝不全图查名；连线层只画中心到有路径方向的简单线段；
+// 当前地块说明文本渲染在与地图 div 平级的独立信息 div（#play-info），内部滚动。
+// 平级信息 div（#play-info）：当前地块说明文本、内部滚动。
 
-import { $ } from "./shared.js";
+import { $, DIR_LABELS } from "./shared.js";
 
 const SVG = "http://www.w3.org/2000/svg";
 const ORDER = ["up", "right", "down", "left"];
 
-// 棋盘自适应：正方形尺寸 = 地图区域的宽与「高减去兄弟元素（hint/+N 列表）」的较小值
+// 棋盘自适应：正方形尺寸 = 地图区域的宽与「高减去兄弟元素（hint）」的较小值
 function fitBoard(board) {
   if (!board) {
     return;
@@ -65,23 +65,17 @@ export function renderPlay(world, moveTo) {
 
   const scene = world.player.scene;
   const loc = scene.location;
-  const exits = Array.isArray(scene.exits) ? scene.exits : [];
+  const paths = Array.isArray(scene.paths) ? scene.paths : [];
 
-  // 槽位分配：正常地图每方向至多一条；多余（出度>4 或同方向冲突）走「+N」折叠
-  const slots = { up: null, right: null, down: null, left: null };
-  const extra = [];
-  for (const e of exits) {
-    if (
-      Object.prototype.hasOwnProperty.call(slots, e.direction) &&
-      slots[e.direction] === null
-    ) {
-      slots[e.direction] = e;
-    } else {
-      extra.push(e);
+  // 按方向分组（保持 scene 内给出的顺序 = 槽内索引）
+  const byDir = { up: [], right: [], down: [], left: [] };
+  for (const p of paths) {
+    if (Object.prototype.hasOwnProperty.call(byDir, p.direction)) {
+      byDir[p.direction].push(p);
     }
   }
 
-  // 十字棋盘（正方形，尺寸按地图区域动态计算），内放中心小块、连线层与槽位格
+  // 十字棋盘（正方形，尺寸按地图区域动态计算），内放中心小块、连线层与方向槽位格
   const board = document.createElement("div");
   board.className = "play-board";
   mapEl.appendChild(board);
@@ -96,13 +90,13 @@ export function renderPlay(world, moveTo) {
   center.textContent = loc.name;
   board.appendChild(center);
 
-  // 连线层：中心到每个占位槽位一条无箭头线段
+  // 连线层：中心到每个有路径的方向槽位一条无箭头线段
   const lines = document.createElementNS(SVG, "svg");
   lines.setAttribute("viewBox", "0 0 100 100");
   lines.setAttribute("preserveAspectRatio", "none");
   lines.classList.add("play-lines");
   for (const dir of ORDER) {
-    if (slots[dir]) {
+    if (byDir[dir].length > 0) {
       const line = document.createElementNS(SVG, "line");
       const [x2, y2] = DIR_POS[dir];
       line.setAttribute("x1", 50);
@@ -114,84 +108,52 @@ export function renderPlay(world, moveTo) {
   }
   board.appendChild(lines);
 
-  // 槽位格：无连接的槽位不渲染任何元素
+  // 方向槽位格：该方向的全部平行路径逐一列出（每条 = 一个可选按钮）
   for (const dir of ORDER) {
-    const exit = slots[dir];
-    if (!exit) {
+    const dirPaths = byDir[dir];
+    if (dirPaths.length === 0) {
       continue;
     }
     const cell = document.createElement("div");
     cell.className = `play-cell play-slot play-${dir}`;
-    const tName = document.createElement("div");
-    tName.className = "play-target-name";
-    if (exit.target_name) {
-      tName.textContent = exit.target_name;
-    } else {
-      tName.textContent = "???";
-      tName.classList.add("play-unknown");
+    const head = document.createElement("div");
+    head.className = "play-dir-label";
+    head.textContent = DIR_LABELS[dir];
+    cell.appendChild(head);
+    for (const p of dirPaths) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "play-path-btn";
+      const label = document.createElement("span");
+      label.className = "play-path-label";
+      label.textContent = p.label || "（无标签）";
+      const target = document.createElement("span");
+      target.className = "play-path-target";
+      if (p.target_name) {
+        target.textContent = p.target_name;
+      } else {
+        target.textContent = "???";
+        target.classList.add("play-unknown");
+      }
+      btn.appendChild(label);
+      btn.appendChild(target);
+      btn.addEventListener("click", () => void moveTo(p.direction, p.path));
+      cell.appendChild(btn);
     }
-    cell.appendChild(tName);
-    cell.addEventListener("click", () => void moveTo(exit.exit_id));
     board.appendChild(cell);
   }
 
-  // 平级信息 div：当前地块说明文本（实体系统后续版本再接入）
-  if (loc.description) {
-    infoEl.textContent = loc.description;
+  // 平级信息 div：当前地块说明文本（时段已由引擎解析）
+  if (scene.description) {
+    infoEl.textContent = scene.description;
     infoEl.hidden = false;
   }
 
-  if (exits.length === 0) {
+  if (paths.length === 0) {
     const hint = document.createElement("p");
     hint.className = "hint";
-    hint.textContent = "这里没有任何出口，你似乎被困住了。";
+    hint.textContent = "这里没有任何路径，你似乎被困住了。";
     mapEl.appendChild(hint);
     fitBoard(board);
-  }
-
-  // 违规地图折叠兜底：展开全部出口列表（保留 exit_id），可收回
-  if (extra.length > 0) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "btn play-more";
-    btn.textContent = `＋${extra.length} 条出边`;
-    btn.addEventListener("click", () => {
-      const list = document.createElement("div");
-      list.className = "play-extra-list";
-      for (const e of extra) {
-        const item = document.createElement("button");
-        item.type = "button";
-        item.className = "exit-btn";
-        const label = document.createElement("span");
-        label.className = "exit-label";
-        label.textContent = e.label;
-        const target = document.createElement("span");
-        target.className = "exit-target";
-        if (e.target_name) {
-          target.textContent = e.target_name;
-        } else {
-          target.textContent = "???";
-          target.classList.add("exit-target-hidden");
-        }
-        item.appendChild(label);
-        item.appendChild(target);
-        item.addEventListener("click", () => void moveTo(e.exit_id));
-        list.appendChild(item);
-      }
-      const close = document.createElement("button");
-      close.type = "button";
-      close.className = "btn";
-      close.textContent = "收起";
-      close.addEventListener("click", () => {
-        list.remove();
-        btn.hidden = false;
-        fitBoard(board);
-      });
-      list.appendChild(close);
-      btn.hidden = true;
-      mapEl.appendChild(list);
-      fitBoard(board);
-    });
-    mapEl.appendChild(btn);
   }
 }
