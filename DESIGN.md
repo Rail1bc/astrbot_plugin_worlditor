@@ -72,7 +72,7 @@ v2 模型（id 关联的有向图 Location/Exit）已删除，直接替换为 v3
 | `world_meta(key TEXT PK, value)` | `schema_version` + agent 位置 `(map_id,row,col)` |
 
 - WAL；启动全量载入内存（读路径快）。
-- `maps` 为空时幂等播种默认地图 + 种子地块（小镇区 + 迷雾区：平行路径 / 多目标加权 / 隐藏目标 / 环路），agent 初始在出生点。
+- `maps` 为空时幂等播种默认地图 + 种子地块（广场 · 步行街 · AstrBot大道 · 开源小区 · AstrBot大学 · 迷雾森林；相邻地块默认双向连接，森林无路方向 → 迷雾深处），agent 初始在出生点。
 - **无 v2→v3 迁移**：solo 迭代、未公开，旧库（v2 `locations` / `exits` 表）数据直接丢弃，空库按新模型重建（见「数据模型 v3」一节）。
 - 编辑写操作（`save_location` / `delete_location` / `save_template` / `delete_template` / `save_agent_pos`）遵循 DB 先、内存后的约定，同时维护 `loc_by_pos[(map_id,row,col)]` 与 `templates` 索引。
 
@@ -234,7 +234,7 @@ class WorldMap:
 | `templates(id TEXT PK, name, data_json)` | 地块模板（复制预设） |
 | `world_meta(key TEXT PK, value)` | `schema_version` + agent 位置 `(map_id,row,col)` |
 
-**无 v2→v3 迁移**：solo 迭代、未公开，旧库（v2 `locations` / `exits` 表）数据直接丢弃；空库幂等播种新世界（小镇 + 迷雾区按新模型重建——平行路径 / 多目标加权，隐藏目标 / 环路表达保留）。
+**无 v2→v3 迁移**：solo 迭代、未公开，旧库（v2 `locations` / `exits` 表）数据直接丢弃；空库幂等播种新世界（网格小镇：广场 · 步行街 · AstrBot大道 · 开源小区 · AstrBot大学 · 迷雾森林，连接由占位网格自动生成）。
 
 ### 接口与工具变化
 
