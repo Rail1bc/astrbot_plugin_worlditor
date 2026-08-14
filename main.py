@@ -52,7 +52,7 @@ from .world.v4engine import V4WorldEngine
 from .world.v4store import V4WorldStore
 
 PLUGIN_NAME = "astrbot_plugin_worlditor"
-__version__ = "4.1.0"
+__version__ = "0.3.0"  # 0.x 预发布（正式上线前保持 0 开头）
 
 
 class WorlditorPlugin(

@@ -11,7 +11,7 @@
 <p><sub>地块 + 实体 &nbsp;&nbsp; 玩法包扩展 &nbsp;&nbsp; MCP 唯一动作通道 &nbsp;&nbsp; 独立 WebUI</sub></p>
 
 <p>
-  <a href="https://github.com/Rail1bc/astrbot_plugin_worlditor/releases"><img src="https://img.shields.io/badge/%E7%89%88%E6%9C%AC-v4.1.0-5f7f79?style=flat-square&labelColor=263a36" alt="最新版本"></a>
+  <a href="https://github.com/Rail1bc/astrbot_plugin_worlditor/releases"><img src="https://img.shields.io/badge/%E7%89%88%E6%9C%AC-v0.3.0-5f7f79?style=flat-square&labelColor=263a36" alt="最新版本"></a>
   <img src="https://img.shields.io/badge/Python-3.12%2B-e9f1ef?style=flat-square&labelColor=263a36" alt="Python 3.12 或更高版本">
   <img src="https://img.shields.io/badge/AstrBot-%3E%3D%204.24.1-f3eee4?style=flat-square&labelColor=544c3d" alt="AstrBot 4.24.1 或更高版本">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-f2e8e5?style=flat-square&labelColor=5b403a" alt="AGPL-3.0 许可证"></a>
@@ -20,7 +20,7 @@
 </div>
 
 > [!NOTE]
-> **当前版本状态**：v4.1.0 是**世界底子 + 唯一动作通道**——内核（worlditor）只提供世界的事实模型、动作原语、交互协议与玩法包注册表，**明确不做任何具体玩法**；玩法（角色养成、物品合成、交易市场、战斗……）由玩法包（`worlditor_play_*`）从开源社区生长。v4.1 已落地：**MCP 唯一动作通道**（streamable HTTP + stdio，连接身份验证）、**身份自助注册**（open/invite/closed + token 三档）与**独立 WebUI**（移动端优先，WebUI 本身是 MCP 客户端）。v3 的 agent 工具与调试页保留过渡。完整设计见 [DESIGN_V4.md](DESIGN_V4.md)。
+> **当前版本状态**：v0.3.0（0.x 预发布，正式上线前保持 0 开头）是**世界底子 + 唯一动作通道**——内核（worlditor）只提供世界的事实模型、动作原语、交互协议与玩法包注册表，**明确不做任何具体玩法**；玩法（角色养成、物品合成、交易市场、战斗……）由玩法包（`worlditor_play_*`）从开源社区生长。已落地：**MCP 唯一动作通道**（streamable HTTP + stdio，连接身份验证）、**身份自助注册**（open/invite/closed + token 三档）与**独立 WebUI**（移动端优先，WebUI 本身是 MCP 客户端，构建产物插件内置托管）。v3 的 agent 工具与调试页保留过渡。完整设计见 [DESIGN_V4.md](DESIGN_V4.md)。
 
 ## 这是什么
 

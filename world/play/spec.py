@@ -98,7 +98,7 @@ def version_ok(installed: str, requirement: str) -> bool:
 
 
 def _parse_version(version: str) -> tuple[int, ...]:
-    """'v4.0.0' / '4.0' / '4.0.0-beta' → (4, 0, 0)（数字前缀段，不足补 0）。"""
+    """'0.3.0' / '0.3' / '0.3.0-beta' → (0, 3, 0)（数字前缀段，不足补 0）。"""
     parts: list[int] = []
     for token in version.strip().lstrip("vV").split("."):
         digits = ""

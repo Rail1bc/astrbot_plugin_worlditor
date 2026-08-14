@@ -3,7 +3,7 @@
 <!-- markdownlint-disable MD041 -->
 # ChangeLog
 
-## [v4.1.0] - 2026-08
+## [v0.3.0] - 2026-08
 
 ### 🌐 MCP 唯一动作通道 + 身份注册 + 独立 WebUI（v4.1 完整落地）
 
@@ -23,10 +23,8 @@
 - **WebUI（`webui/`，Vue3 + Vite，移动端优先）**：hash 路由四页（世界地图 / 背包 / 角色 / 日志）+ 登录注册页（含围观 read 档与 agent 凭据申请）；**轻量 MCP client**（fetch JSON-RPC + session + _meta）；世界页触屏 SVG 网格地图（平移/缩放/方向按钮/说话/同地块角色条）+ SSE 增量更新与断线重连快照兜底；交互弹窗按 UiBlock schema 渲染（text/menu/list/form/confirm/character/custom fallback）。`npm run build` 通过。
 - **插件内置托管 WebUI**：`webui/dist/` 构建产物随插件发行，6288 世界服务自动挂载为根路径静态资源（免认证加载登录页，API 路由优先）——开启 `enable_world_api` 后访问 `http://<主机>:6288/` 即完整 WebUI，无需单独部署前端；也可独立部署（`VITE_WORLD_API` + `allowed_origins`）。
 - 插件配置（`_conf_schema.json`）：auth_mode / admin_key / allow_agent_register / enable_world_api / world_api_host / world_api_port / allowed_origins。
-- **版本统一 v4.1.0**（metadata / main.py / README / CHANGELOG）。
-- 测试：+8 世界服务（含真实 uvicorn MCP 端到端）+ ui_hooks，全套 157 通过。
-
-## [v4.0.0] - 2026-08
+- **版本统一 v0.3.0**（metadata / main.py / README / CHANGELOG；0.x 预发布，正式上线前保持 0 开头）。
+- 测试：+8 世界服务（含真实 uvicorn MCP 端到端）+ ui_hooks，全套 158 通过。
 
 ### 🏗 世界底子内核（v4 起点：事实模型 + 原语 + 注册表 + 事件总线）
 
@@ -69,7 +67,7 @@ v3 功能（LLM 工具 / 调试页）继续可用，v4.1 起取代 v3）。
   链路（talk/trade 对话流、effects 声明式 vs 命令式 API 两种购买写法、
   苹果食用回血事件链、告示牌 tick 更新、迷雾进入提示），充当 SDK 模板，
   可删除。
-- **版本统一**：v3 版本漂移（metadata v0.2.0）修复为 v4.0.0。
+- **版本统一**：v3 版本漂移（metadata v0.2.0）修复为 v0.3.0。
 - 并发：实例级可重入异步锁（AsyncRLock，事件/tick handler 内调原语不死锁）；
   时钟/PRNG 注入保证可测（46 个新单测，全套 117 个通过）。
 

@@ -35,7 +35,7 @@ def make_loader(db_path: Path, plays_dir: Path) -> PlayLoader:
         engine,
         plays_dir=plays_dir,
         demo_dir=REPO_ROOT / "demo_play",
-        worlditor_version="4.0.0",
+        worlditor_version="0.3.0",
     )
 
 
@@ -49,7 +49,7 @@ def _write_play(root: Path, name: str, main_code: str, yaml_extra: str = "") -> 
         f"version: 0.1.0\n"
         f"author: test\n"
         f"requires:\n"
-        f'  worlditor: ">=4.0.0"\n'
+        f'  worlditor: ">=0.3.0"\n'
         f"  plays: []\n"
         f"{yaml_extra}",
         encoding="utf-8",

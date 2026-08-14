@@ -201,7 +201,7 @@ def test_play_web_static(tmp_path):
         play_dir.mkdir(parents=True, exist_ok=True)
         (play_dir / "play.yaml").write_text(
             "name: worlditor_play_ui\ndisplay_name: UI\nversion: 0.1.0\n"
-            'requires:\n  worlditor: ">=4.0.0"\n  plays: []\n',
+            'requires:\n  worlditor: ">=0.3.0"\n  plays: []\n',
             encoding="utf-8",
         )
         (play_dir / "main.py").write_text(

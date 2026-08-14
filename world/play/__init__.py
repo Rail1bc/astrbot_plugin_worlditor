@@ -47,7 +47,7 @@ class PlayLoader:
         *,
         plays_dir: Path,
         demo_dir: Path | None = None,
-        worlditor_version: str = "4.0.0",
+        worlditor_version: str = "0.3.0",
     ) -> None:
         self.engine = engine
         self.plays_dir = Path(plays_dir)

@@ -26,7 +26,7 @@ worlditor 从"一个探索世界"升级为**世界平台**：
 | 玩法包形态 | worlditor 自动发现加载 `worlditor_play_*`，独立仓库、不占 AstrBot 插件位；版本自声明（`requires`） |
 | 独立 WebUI 技术栈 | Vue 3 + Vite，移动端优先，独立部署（独立端口 / 静态托管），token 鉴权 |
 | v3 → v4 迁移 | **无迁移，空库重建**（延续 v3 先例）：旧 world.db 直接丢弃，空库重建播种（含演示实体与物品） |
-| 版本号 | 统一为 v4.0.0（metadata.yaml / README / CHANGELOG 同步，修复 v3 版本漂移） |
+| 版本号 | 统一为 v0.3.0（0.x 预发布，正式上线前保持 0 开头；metadata.yaml / README / CHANGELOG 同步，修复 v3 版本漂移） |
 
 ### A 组（契约语义）
 
@@ -258,7 +258,7 @@ version: 0.1.0
 author: ...
 desc: ...
 requires:
-  worlditor: ">=4.0.0"
+  worlditor: ">=0.3.0"
   plays: []              # 依赖其他玩法包（版本可写 ">=x.y.z"；v4.0 仅声明，解析 v4.2）
 icon: assets/icon.png
 ```
@@ -488,6 +488,6 @@ EVENTS = {
 ## 路线图
 
 - **v4.0 底子内核**（✅ 完成）：v4model / v4store（新表，与 v3 同库共存）/ v4engine（原语 + 事件总线）/ 交互原语与 effects 结算 / 玩法包加载器 + `WorlditorPlayAPI` / 广播道具与冷却 / 身份化实体持久化 / 版本统一 / 种子世界 v4（含放置实体）+ `demo_play/` / 全套单测。**无 HTTP 动作端点**（调试页走进程内 Python 动作，B10）。
-- **v4.1 独立 WebUI + MCP（唯一动作通道）**（✅ 完成）：进程内 MCP server（streamable HTTP 独立服务 + stdio 入口，连接身份验证，7 工具结构化返回）、**身份注册**（auth_mode 三模式 + admin_key + token 三档 + 邀请码 + 改密/吊销）、REST 非动作端点（只读快照 / SSE 事件流 / admin 地图编辑含实体放置 / 玩法包 web 资源）、v4 引擎地图编辑原语与事件流订阅、**界面扩展 apply_ui_hooks（B9 before/after/replace，MCP 返回前应用）**、**WebUI（Vue3 + Vite 移动端优先四页 + 登录注册 + 交互弹窗 UiBlock 渲染 + SSE 增量更新 + 轻量 MCP client）**、版本统一 v4.1.0。custom 组件动态加载留 v4.2。
+- **v4.1 独立 WebUI + MCP（唯一动作通道）**（✅ 完成）：进程内 MCP server（streamable HTTP 独立服务 + stdio 入口，连接身份验证，7 工具结构化返回）、**身份注册**（auth_mode 三模式 + admin_key + token 三档 + 邀请码 + 改密/吊销）、REST 非动作端点（只读快照 / SSE 事件流 / admin 地图编辑含实体放置 / 玩法包 web 资源）、v4 引擎地图编辑原语与事件流订阅、**界面扩展 apply_ui_hooks（B9 before/after/replace，MCP 返回前应用）**、**WebUI（Vue3 + Vite 移动端优先四页 + 登录注册 + 交互弹窗 UiBlock 渲染 + SSE 增量更新 + 轻量 MCP client）**、版本统一 v0.3.0。custom 组件动态加载留 v4.2。
 - **v4.2 玩法 SDK 定型**：开发者文档（docs/PLAY_DEV.md）+ 玩法包依赖解析打磨 + 社区参考玩法。
 - **v5 联邦**：MCP 公网通道（streamable HTTP）+ **agent 自助注册与凭据管理（B13）** + 限流；可选：SSE 对远程开放、`RemoteEngine` 客户端模式。
