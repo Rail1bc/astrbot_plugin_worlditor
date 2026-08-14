@@ -29,7 +29,7 @@ from astrbot.api.web import (  # noqa: E402
 )
 from astrbot_plugin_worlditor.api.edit import EditAPI  # noqa: E402
 from astrbot_plugin_worlditor.api.play import PlayAPI  # noqa: E402
-from astrbot_plugin_worlditor.api.routes import _ROUTES  # noqa: E402
+from astrbot_plugin_worlditor.api.routes import _ROUTES, _V4_ROUTES  # noqa: E402
 from astrbot_plugin_worlditor.api.state import StateAPI  # noqa: E402
 from astrbot_plugin_worlditor.world.engine import (  # noqa: E402
     AGENT_PLAYER_ID,
@@ -575,7 +575,7 @@ def test_routes_table_complete():
 
 
 def test_main_wires_routes(monkeypatch, tmp_path):
-    """main.py 的 Star 装配：以插件前缀注册全部路由（构造期即校验拼写）。"""
+    """main.py 的 Star 装配：以插件前缀注册全部路由（v3 + v4，构造期即校验拼写）。"""
     from astrbot_plugin_worlditor import main as main_mod
 
     registered: list[tuple[str, list[str]]] = []
@@ -591,6 +591,7 @@ def test_main_wires_routes(monkeypatch, tmp_path):
     )
     main_mod.WorlditorPlugin(FakeContext())
     expected = [
-        (f"/astrbot_plugin_worlditor{path}", methods) for path, _, methods, _ in _ROUTES
+        (f"/astrbot_plugin_worlditor{path}", methods)
+        for path, _, methods, _ in (*_ROUTES, *_V4_ROUTES)
     ]
     assert registered == expected

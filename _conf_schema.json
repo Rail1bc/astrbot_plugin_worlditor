@@ -1,0 +1,44 @@
+{
+  "auth_mode": {
+    "description": "世界注册模式",
+    "type": "string",
+    "default": "open",
+    "hint": "open（开放自助注册）/ invite（需邀请码）/ closed（封闭，仅管理员签发凭据）"
+  },
+  "admin_key": {
+    "description": "管理员注册密钥",
+    "type": "string",
+    "default": "",
+    "hint": "注册时提供该密钥的账户自动成为管理员；留空则无管理员注册通道"
+  },
+  "allow_agent_register": {
+    "description": "允许 agent 自助注册",
+    "type": "bool",
+    "default": true,
+    "hint": "关闭后 agent 凭据只能由管理员签发"
+  },
+  "enable_world_api": {
+    "description": "启用世界 HTTP API（MCP streamable HTTP 独立服务）",
+    "type": "bool",
+    "default": false,
+    "hint": "启用后监听独立端口，供远程 MCP 客户端 / WebUI 接入；公网部署建议经 HTTPS 反向代理"
+  },
+  "world_api_host": {
+    "description": "世界 HTTP API 监听地址",
+    "type": "string",
+    "default": "0.0.0.0",
+    "hint": "公网部署建议经反向代理，不要直接暴露"
+  },
+  "world_api_port": {
+    "description": "世界 HTTP API 端口",
+    "type": "int",
+    "default": 6288,
+    "hint": "HTTPS 反向代理指向该端口"
+  },
+  "allowed_origins": {
+    "description": "允许的跨域来源（逗号分隔）",
+    "type": "string",
+    "default": "",
+    "hint": "WebUI 独立部署域名，如 https://world.example.com；留空表示不限制（本地/内网使用）"
+  }
+}

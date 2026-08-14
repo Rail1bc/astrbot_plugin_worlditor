@@ -3,6 +3,81 @@
 <!-- markdownlint-disable MD041 -->
 # ChangeLog
 
+## [v4.1.0] - 2026-08
+
+### 🌐 MCP 唯一动作通道 + 身份注册 + 独立 WebUI（v4.1 完整落地）
+
+人类玩家与 agent 走同一条 MCP 动作通道（B10），REST 仅非动作；身份自助注册（B13）；WebUI 移动端优先（本身是 MCP 客户端）。
+
+- **进程内 MCP server（`world/mcp/`）**：
+  - 7 个世界工具（world_look / world_move / world_say / world_bag / world_use / world_interact / world_who），返回结构化 JSON `{text, ui, effects}`（agent 读 text、UI 渲染 ui）。
+  - **streamable HTTP**（公网接入）：FastMCP `streamable_http_app()` + 认证中间件 + 独立 uvicorn 服务（配置 `enable_world_api` / `world_api_host` / `world_api_port`，默认 6288）；连接即身份验证——中间件校验 `Bearer <token>` 并把 `{entity_id, tier}` 注入 JSON-RPC `params._meta`，工具经 `ctx.request_context.meta` 读取。
+  - **stdio**（本地）：独立进程入口 `python -m astrbot_plugin_worlditor.world.mcp.stdio --db <world.db> --token <凭据>`，一个连接绑定一个实体（修复 Windows stdout GBK 编码）。
+  - 真实 uvicorn 下 MCP HTTP 端到端测试（认证 + 注入 + 工具执行 + 交互）。
+- **身份注册系统（`world/identity.py` + accounts/tokens/invite_codes 表）**：
+  - auth_mode 三模式（open / invite / closed）+ token 三档（read / play / admin）+ admin_key 管理员通道（豁免模式限制）。
+  - 人类账户（用户名+密码，PBKDF2）→ player 实体；agent 注册 → agent 实体 + 凭据；邀请码批量生成/吊销；改密/注销/吊销；read 档围观免注册。
+- **世界服务（6288 独立端口，WebUI 单一连接源）**：`/world/mcp`（动作）+ `/state` `/scene`（含实体可用动作）`/bag`（快照）+ `/events`（SSE，事件总线订阅出口）+ `/auth/*`（身份）+ `/plays/<id>/web/*`（玩法包资源）+ CORS（`allowed_origins`）。
+- **界面扩展（B9）**：`engine.apply_ui_hooks`（before/after/replace 递归展开，provider 异常隔离），MCP 交互返回前应用——玩法包注册的钩子对 agent 与 WebUI 同时生效。
+- **v4 引擎**：补齐地图编辑原语（地块 create/update/delete/move、连接槽位、地图 create/update、实体字段更新）+ 事件流订阅（subscribe/unsubscribe，队列满丢最旧）。
+- **WebUI（`webui/`，Vue3 + Vite，移动端优先）**：hash 路由四页（世界地图 / 背包 / 角色 / 日志）+ 登录注册页（含围观 read 档与 agent 凭据申请）；**轻量 MCP client**（fetch JSON-RPC + session + _meta）；世界页触屏 SVG 网格地图（平移/缩放/方向按钮/说话/同地块角色条）+ SSE 增量更新与断线重连快照兜底；交互弹窗按 UiBlock schema 渲染（text/menu/list/form/confirm/character/custom fallback）。`npm run build` 通过。
+- **插件内置托管 WebUI**：`webui/dist/` 构建产物随插件发行，6288 世界服务自动挂载为根路径静态资源（免认证加载登录页，API 路由优先）——开启 `enable_world_api` 后访问 `http://<主机>:6288/` 即完整 WebUI，无需单独部署前端；也可独立部署（`VITE_WORLD_API` + `allowed_origins`）。
+- 插件配置（`_conf_schema.json`）：auth_mode / admin_key / allow_agent_register / enable_world_api / world_api_host / world_api_port / allowed_origins。
+- **版本统一 v4.1.0**（metadata / main.py / README / CHANGELOG）。
+- 测试：+8 世界服务（含真实 uvicorn MCP 端到端）+ ui_hooks，全套 157 通过。
+
+## [v4.0.0] - 2026-08
+
+### 🏗 世界底子内核（v4 起点：事实模型 + 原语 + 注册表 + 事件总线）
+
+定位从「世界编辑器」升级为「世界平台内核」：内核不做玩法，玩法由玩法包
+（`worlditor_play_*`）以注册表接入生长。v4 为破坏性重构（无迁移），与 v3
+**同库共存过渡**（同一 world.db：v3 表结构沿用共享，v4 新增五表独立；
+v3 功能（LLM 工具 / 调试页）继续可用，v4.1 起取代 v3）。
+
+- **实体统一模型（B12）**：世界只有地块与实体两个概念——玩家（kind=player）、
+  agent（kind=agent）是内置身份化实体，其余 kind（merchant/sign/door...）由
+  玩法包注册；统一 `entities` 表（uuid4 id / 位置 / attrs / state / user_id /
+  last_active_ts），身份化实体有背包、位置持久化。
+- **物品（定义与持有分离）**：`items` 表（ItemDef：name/desc/icon/stackable/
+  use_action/attrs）+ `inventories` 表（按实体持有，条目可带个体差异 attrs，
+  C1 装备/格子由玩法包自管）；原语 give/take/count/list。
+- **交互协议（A1）**：`interact(entity, target, action, args, item_id)` →
+  玩法包 handler（async，兼容同步）→ 内核结算**声明式 effects**（give_item /
+  take_item / move / move_entity / set_attrs / say 子集，无 teleport）→
+  `InteractionResult{text, ui, effects}`（B10 返回协议）。
+- **事件总线（单一事件源）**：9 个事件（on_tick 带各自间隔 / on_entity_move /
+  on_entity_enter / on_say / on_interact / on_item_used / on_entity_removed /
+  on_entity_changed / on_world_edited），玩法包订阅 + 写入 world_log（上限
+  5000 条，B3）；on_tick 单循环 1s 粒度调度、串行执行、异常隔离（A3）。
+- **广播（B2）**：内置喇叭道具，say(scope=world) 消耗 1 个 + 每人 30s 冷却
+  （管理员豁免）；cell 级不限。
+- **玩法包系统（B6）**：自动发现 `demo_play/`（内核自带，SDK 模板）与
+  `<数据目录>/plays/worlditor_play_*`；play.yaml 元数据 + requires 校验
+  （v4.0 只校验 worlditor 版本，plays 依赖声明保留、解析 v4.2）；
+  每个玩法包独立 `WorlditorPlayAPI`（kv namespace 隔离）；加载失败记日志
+  跳过、不阻断内核；`setup(api, context)` / 可选 `teardown(api)`。
+- **实体移动**：身份化实体按路径移动（v3 语义：死引用剔除 + 加权抽目标，
+  返回 SceneView）；block_move 阻挡（state 可动态覆盖 kind 声明，门开/关
+  由玩法包写 state）；`move_entity` 直接坐标（行为驱动，传送语义）。
+- **地图编辑**：`place_entity` / `remove_entity`（admin，B8：实体 = 地图
+  编辑内容，无生成/移除原语给玩法包）；删除地块级联删除其上实体。
+- **种子世界 v4**：41 地块小镇沿用；新增演示实体（广场「商贩·阿福」
+  merchant / 步行街「告示牌」sign / 迷雾森林入口「木门」door block_move）
+  与演示物品（苹果 use_action=eat / 喇叭内置广播道具）。
+- **内置 demo_play/**：演示 item / entity_kind / interaction / event 完整
+  链路（talk/trade 对话流、effects 声明式 vs 命令式 API 两种购买写法、
+  苹果食用回血事件链、告示牌 tick 更新、迷雾进入提示），充当 SDK 模板，
+  可删除。
+- **版本统一**：v3 版本漂移（metadata v0.2.0）修复为 v4.0.0。
+- 并发：实例级可重入异步锁（AsyncRLock，事件/tick handler 内调原语不死锁）；
+  时钟/PRNG 注入保证可测（46 个新单测，全套 117 个通过）。
+
+### 💥 破坏性变更（相对 v3 设计）
+
+- v4 数据模型为**新表**（entities/items/inventories/play_data/world_log），
+  与 v3 表同库并存、无迁移；玩法包为 v4 的玩法入口（v4.1 起 WebUI + MCP）。
+
 ## [v3.0.0] - 2026-08-13
 
 ### 💥 数据模型重构 v3（破坏性变更，无迁移）

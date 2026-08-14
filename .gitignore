@@ -19,3 +19,7 @@ venv/
 
 # AstrBot 核心运行数据（勿提交）
 data/
+
+# WebUI 前端（依赖不提交；构建产物 dist/ 提交——插件内置托管需要随发行）
+webui/node_modules/
+

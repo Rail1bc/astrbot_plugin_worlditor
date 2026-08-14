@@ -4,14 +4,14 @@
 
 <p><strong>简体中文</strong></p>
 
-<h1>世界编辑器</h1>
+<h1>世界底子（worlditor）</h1>
 
-<p><strong>为 AstrBot 构建的网格世界：一个可以无限生长的世界，AI 与人都能进入。</strong></p>
+<p><strong>为 AstrBot 构建的世界平台内核：一个可以无限生长的世界，AI 与人都能进入。</strong></p>
 
-<p><sub>网格底座 &nbsp;&nbsp; 4 方向连接 &nbsp;&nbsp; AI 与人共存 &nbsp;&nbsp; 实体与交互</sub></p>
+<p><sub>地块 + 实体 &nbsp;&nbsp; 玩法包扩展 &nbsp;&nbsp; MCP 唯一动作通道 &nbsp;&nbsp; 独立 WebUI</sub></p>
 
 <p>
-  <a href="https://github.com/Rail1bc/astrbot_plugin_worlditor/releases"><img src="https://img.shields.io/badge/%E7%89%88%E6%9C%AC-v3.0.0-5f7f79?style=flat-square&labelColor=263a36" alt="最新版本"></a>
+  <a href="https://github.com/Rail1bc/astrbot_plugin_worlditor/releases"><img src="https://img.shields.io/badge/%E7%89%88%E6%9C%AC-v4.1.0-5f7f79?style=flat-square&labelColor=263a36" alt="最新版本"></a>
   <img src="https://img.shields.io/badge/Python-3.12%2B-e9f1ef?style=flat-square&labelColor=263a36" alt="Python 3.12 或更高版本">
   <img src="https://img.shields.io/badge/AstrBot-%3E%3D%204.24.1-f3eee4?style=flat-square&labelColor=544c3d" alt="AstrBot 4.24.1 或更高版本">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-f2e8e5?style=flat-square&labelColor=5b403a" alt="AGPL-3.0 许可证"></a>
@@ -20,71 +20,92 @@
 </div>
 
 > [!NOTE]
-> **当前版本状态**：v3.0.0 将世界底座重构为**网格世界**——地块以 (行, 列) 为身份落在网格上，每地块固定 4 个方向槽位、槽内多条**平行路径**（每条路径有分时段加权文本标签、可隐藏目的地、可携带多个加权意外目标）；引入**地块模板**（复制预设）。`world_move` 从按出口 id 改为按「方向 + 路径索引」。v3 为**破坏性变更且无迁移**：solo 迭代、未公开，旧 world.db 直接丢弃、播种世界重建。完整设计见 [DESIGN.md](DESIGN.md)。
+> **当前版本状态**：v4.1.0 是**世界底子 + 唯一动作通道**——内核（worlditor）只提供世界的事实模型、动作原语、交互协议与玩法包注册表，**明确不做任何具体玩法**；玩法（角色养成、物品合成、交易市场、战斗……）由玩法包（`worlditor_play_*`）从开源社区生长。v4.1 已落地：**MCP 唯一动作通道**（streamable HTTP + stdio，连接身份验证）、**身份自助注册**（open/invite/closed + token 三档）与**独立 WebUI**（移动端优先，WebUI 本身是 MCP 客户端）。v3 的 agent 工具与调试页保留过渡。完整设计见 [DESIGN_V4.md](DESIGN_V4.md)。
 
 ## 这是什么
 
-一个可以无限生长的世界：
+一个可以无限生长的世界平台：
 
-- **世界 = 网格 + 4 方向连接**：地块（Location）以 (行, 列) 为身份落在网格上，每个地块固定 4 个方向槽位（上/右/下/左），槽位内可配置多条**平行可选路径**——每条路径带分时段加权文本标签、可选隐藏目的地（`???`）与多个加权意外目标（如「脚滑跌下悬崖」「没看路掉进井盖」）。`a→b` 可达**不蕴含** `b→a`；隐藏目标 / 环路 / 平行路径表达的复杂度由路径结构承载。
-- **实体与交互是内容**（长期愿景）：人物、生物、建筑、路障，乃至非现实物品皆为实体；交互方式可无限扩展，交互总有新花样。
-- **AI 与人都能进入**：agent 是世界的常住居民，位置跨对话持久化；v1 人类玩家以隐形实体身份进入，v2 将引入账户体系。
-
-<table>
-<tr>
-<td width="33%"><strong>网格世界</strong><br><br>地块以 (行, 列) 定位，每地块固定 4 方向槽位；槽内平行路径 × 多目标，隐藏 / 环路 / 意外事件皆可表达。</td>
-<td width="33%"><strong>无限生长</strong><br><br>世界可不断扩展：增删地块与连接路径、引入实体与交互，内容由 AI 与玩家共同织就。</td>
-<td width="33%"><strong>AI 与人共存</strong><br><br>agent 以固定身份住在世界里，位置跨对话持久化；玩家 v1 为隐形实体、v2 为账户化用户。</td>
-</tr>
-</table>
+- **世界只有两个概念：地块与实体**（v4，B12）。玩家（`kind=player`）、AI agent（`kind=agent`）是内置实体；NPC、门、告示牌、商贩都是玩法包注册的实体 kind——"饮料商人"与"自动售卖机"在功能上无本质区别，差异只是 kind 与文本。
+- **内核只懂原语**：移动、说话、拾取、给/扣物品、触发交互、改状态、广播事件。不含伤害公式、合成配方、价格、升级曲线——这些都是玩法包的数据与代码。
+- **玩法 = 玩法包**：物品、对话树、配方、货单是玩法包自带的数据文件；行为逻辑是玩法包代码。玩法包通过注册表接入内核（实体 kind / 交互动作 / 事件订阅 / UI 组件与钩子），与内核彻底解耦。
+- **交互是协议**：`interact(实体, 目标, 动作)` → 玩法包 handler → 内核结算声明式 effects → 结构化结果 `{text, ui, effects}`。玩法包只描述界面，不画界面。
+- **单一事件总线**：9 个事件（心跳 / 移动 / 进入 / 说话 / 交互 / 物品使用 / 实体移除 / 实体变化 / 世界编辑），玩法包订阅响应，同时写入世界日志。
+- **AI 与人都能进入**：agent 与玩家都是身份化实体，有背包、位置持久化。
 
 ## 三步开始
 
-1. 从 AstrBot 插件市场安装，或从 [Release](https://github.com/Rail1bc/astrbot_plugin_worlditor/releases) 下载 zip 在「插件」页安装并启用。
-2. 重载 AstrBot——首次启动会播种示例主世界：广场 · 步行街 · AstrBot大道（两侧商铺）· 开源小区 · AstrBot大学 · 迷雾森林（agent 初始在广场）。
-3. 与 agent 对话，让它探索这个世界——它会在需要时调用 `world_look` 查看场景、用 `world_move` 移动；管理员也可以在「插件 → 世界编辑器」调试页里直接操作地图。
+1. 从 AstrBot 插件市场安装，或从 [Release](https://github.com/Rail1bc/astrbot_plugin_worlditor/releases) 下载 zip 在「插件」页安装并启用；在插件配置中开启 `enable_world_api`（世界 HTTP API / MCP + 内置 WebUI，默认端口 6288）。
+2. 重载 AstrBot——首次启动会播种示例主世界（广场 · 步行街 · AstrBot大道 · 开源小区 · AstrBot大学 · 迷雾森林）与演示实体（商贩·阿福 / 告示牌 / 木门），并加载内置演示玩法包。
+3. 浏览器打开 `http://<AstrBot主机>:6288/`（**插件内置托管**的 WebUI）→ 注册/登录（或"围观者身份"）→ 进入世界。
 
-## Agent 工具
+## WebUI（人类玩家入口，A2）
 
-- `world_look`：查看当前位置（地块名称 / 描述）与 4 个方向的连接槽位——每个方向逐条列出平行路径（分时段文本标签 + 主目标名；隐藏目标显示 `???`）。
-- `world_move(direction, path=None)`：沿方向移动，多条平行路径时用 `path` 指定路径索引（索引来自 `world_look`，每次重列）；路径内若含多个加权意外目标则按权重随机命中。非法方向 / 路径返回中文错误串，LLM 可据此自纠。
+移动端优先前端（`webui/`，Vue3 + Vite），**本身是 MCP 客户端**（B10：与 agent 共用同一套工具与认证）：
 
-场景以中文文本注入下一轮 prompt，例如：
+- **世界**：触屏 SVG 网格地图（拖动/缩放）、方向按钮移动、说话、同地块角色条；点击实体 → 交互弹窗（按 UiBlock schema 渲染：text/menu/list/form/confirm/character；custom 块显示 fallback 文本）。
+- **背包**：物品网格，点击使用（world_use）。
+- **角色**：自己的实体属性/状态、修改密码。
+- **日志**：SSE 实时事件流（说话/移动/交互/编辑），切换"全图/当前地块"。
+- 实时性（B11）：SSE 事件驱动增量更新 + 断线重连拉快照兜底，不轮询。
 
-```text
-你当前位于：小镇广场
-描述：阳光洒在广场中央的喷泉上，水花晶莹，人来人往。
-可移动的方向：
-  up[0] 前往步行街·南街口 → 步行街·南街口
-  right[0] 前往AstrBot大道 → AstrBot大道
-  down[0] 前往老路 → 老路
-  left[0] 前往AstrBot大道 → AstrBot大道
+**部署方式（二选一）**：
+
+- **插件内置托管（默认，推荐）**：`webui/dist/` 构建产物随插件发行，6288 世界服务自动挂载为根路径——开启 `enable_world_api` 后访问 `http://<主机>:6288/` 即完整 WebUI，**无需单独部署前端**。
+- **独立部署**：`npm run build` 产物交给任意静态服务器/反向代理，`VITE_WORLD_API` 指向世界服务；跨域时在后端 `allowed_origins` 加入该域名。
+
+开发运行：`cd webui && npm install && npm run dev`（默认 5173；改前端后 `npm run build` 更新内置产物）。
+
+## 接入（MCP 唯一动作通道，B10）
+
+- **远程 agent（联邦基础）**：任意 MCP 客户端（AstrBot 的 MCP client 或任何标准客户端）配置世界服务地址 `https://world.example.com/world/mcp` + agent 凭据（`/auth/agent-register` 自助注册，或 `/auth/register` 带 `admin_key` 由管理员通道创建）即可加入世界，**无需安装 worlditor**。
+- **本地 agent**：`python -m astrbot_plugin_worlditor.world.mcp.stdio --db <world.db> --token <凭据>`（stdio 配置）。
+- 工具集：`world_look` / `world_move` / `world_say` / `world_bag` / `world_use` / `world_interact` / `world_who`，返回 `{text, ui, effects}` 结构化 JSON。
+- 身份：token 三档（read 围观 / play 动作 / admin 管理），`auth_mode` 三模式（open / invite / closed），管理员凭 `admin_key` 注册；凭据可吊销/改密。
+
+## 玩法包（开发者入口）
+
+玩法包 = 一个目录（`worlditor_play_*` 前缀）+ `play.yaml` + `main.py`：
+
+```
+data/plugin_data/astrbot_plugin_worlditor/plays/   # 玩法包根目录（与框架插件目录隔离）
+└── worlditor_play_dungeon/
+    ├── play.yaml        # 元数据：name / version / requires（worlditor 版本）
+    ├── main.py          # 入口：def setup(api, context) -> None
+    ├── data/            # 物品 / 对话树 / 配方 / 货单（json/yaml）
+    └── web/             # 前端资源：自定义界面组件（v4.1）
 ```
 
-## 插件调试页（单页双模式）
+玩法包通过 `WorlditorPlayAPI` 与内核交互（唯一入口，`from astrbot_plugin_worlditor.api import WorlditorPlayAPI`）：
 
-供管理员在 dashboard 内验证与编辑世界（**非正式用户入口**，正式入口为 v2 独立网页）：
+- 注册：`register_item_def` / `register_entity_kind` / `register_interaction` / `register_world_event` / `register_ui_component` / `register_ui_hook`
+- 只读：`get_entity` / `list_entities` / `get_location` / `get_map` / `list_actions`
+- 数据：`kv_get` / `kv_set`（namespace 自动 = 玩法包 id）
+- 动作：`give_item` / `take_item` / `count_item` / `list_inventory` / `move_entity` / `set_attrs` / `get_attrs` / `set_state` / `get_state` / `say` / `interact`
 
-- **编辑模式**（上帝视角，网格地图 + 右键拖动 + 缩放 + 缩略图 + 详情栏）：地图为**固定大小网格**——地块按 (行, 列) 落在主格（正方形，只显示名字 + 出生点徽标；**坐标只读**，移动走专门工具），**连接绘制在地块间隙中的 SVG 连线**——每个方向的连接槽位（上/右/下/左）画在对应一侧间隙，槽内多条平行路径沿间隙垂直方向错开（主路径实线、意外路径以目标点呈现；死引用 = 启用但主目标不可解析 → 红色虚线）；点击间隙可编辑**两侧地块**对应方向的槽位（路径增删 / 排序 / 权重 / 隐藏目标）；**查看 / 编辑子模式**：查看模式只显示已存在的地块与连接，编辑模式显示全部空地块（点击新建，可选模板）与网格背景；**视图隐藏横竖滚动条**：右键拖动 / 滚轮平移，Ctrl/⌘+滚轮以光标为中心缩放，工具条提供 − / + / 百分比 / 适应；**右下角全图缩略图**：显示全图与当前视口范围，可收起/展开、可拖动，点击或拖动可跳转视口；右侧详情栏可收起/展开——点击地块查看/编辑（名称 / 分时段描述 / 槽位摘要 / 「移动地块」工具 / 捕获为模板 / 删除）、点击间隙编辑连接、点击空地块新建。
-- **玩家模式**：模拟玩家视角——地图中间是只含地块名称的小块，上/右/下/左各放一个**方向槽位格**（无路径的方向不渲染），格内是该方向**全部平行路径的按钮列表**（每条显示文本标签 + 主目标名；隐藏目标显示 `???`）；当前地块说明文本在平级详情区（PC 左侧地图、右侧详情一整列；移动端上地图、下详情，详情列单独滚动）；点击路径按钮按「方向 + 路径索引」移动。
-- 无本地 player_id 时自动注册隐形玩家（仅内存，刷新即重新注册）。
+内核自带 `demo_play/`（随发行，可删除）：演示 item / entity_kind / interaction / event 完整链路，充当 SDK 模板。
+
+## Agent 工具（v3，过渡期保留）
+
+- `world_look`：查看当前位置与可移动方向（v3 引擎，位置跨对话持久化）。
+- `world_move(direction, path=None)`：沿方向移动。
+
+agent 与玩家的正式动作通道统一为 MCP 世界工具（见「接入」），v3 工具与调试页在 v4.1 过渡期保留，后续版本移除。
 
 ## 数据与持久化
 
 - 数据库：`data/plugin_data/astrbot_plugin_worlditor/world.db`（SQLite，WAL，启动全量载入内存）。
-- agent 位置跨对话持久化；人类玩家仅内存，15 分钟无活动自动清理。
-- 空白库自动播种示例主世界（广场 · 步行街 · AstrBot大道 · 开源小区 · AstrBot大学 · 迷雾森林）：相邻地块默认双向连接，森林地块无路方向均通向「迷雾深处」。**v3 为破坏性变更且无迁移**：旧 v2 库数据直接丢弃，播种世界重建。
+- v4 新增表：`entities` / `items` / `inventories` / `play_data` / `world_log`（上限 5000 条）；v3 表（maps/locations/templates/world_meta）结构沿用、数据共享。
+- 空白库自动播种示例世界；v4 为破坏性重构但**无迁移**（旧 v3 设计数据直接丢弃重建，v4 表与 v3 表共存互不干扰）。
 
 ## 路线图
 
-- **v2 正式入口**：独立网页（移动端优先）+ 用户系统（注册 / 登录 / token，世界玩家与账户绑定）；暴露世界 HTTP API（共享 token + CORS），插件为唯一权威后端。
-- **实体与交互系统**：人物 / 生物 / 建筑 / 物品等实体，对话 / 开启 / 破坏 / 阅读等交互，LLM 生成 NPC 对话。
-- **地图可视化编辑**：v3 已按新模型（网格 + 4 方向槽位 + 平行路径）在调试页落地；v2 独立网页将作为正式的可视化编辑入口。
-- **人与 agent 实时互见**：SSE 事件流广播全量快照。
-- **MCP 封装**：引擎 action 层协议无关，后续抽独立进程 + FastMCP 薄封装。
-- **独立应用**：独立仓库的方向预留（移动客户端 / 更完整形态），最后考虑。
+- **v4.0 底子内核（✅）**：v4 数据模型 / 物品与实体放置原语 / 交互与 effects 结算 / 玩法包加载器 + WorlditorPlayAPI / 广播道具与冷却 / 事件总线 / 种子世界 v4 + demo_play / 全套单测。
+- **v4.1 独立 WebUI + MCP（✅ 本版）**：进程内 MCP server（streamable HTTP + stdio，连接身份验证）+ Vue3 移动端优先 WebUI（WebUI 本身是 MCP 客户端）+ 交互弹窗（角色卡/UiBlock 渲染）+ 玩法包界面扩展（ui_hook 三位置已落地；custom 组件动态加载 v4.2）+ SSE 实时 + token 三档 + 自助注册（open/invite/closed）。
+- **v4.2 玩法 SDK 定型**：开发者文档（docs/PLAY_DEV.md）+ 玩法包依赖解析 + custom 组件动态加载 + 社区参考玩法。
+- **v5 联邦**：MCP 公网通道，远程 AstrBot（无需安装 worlditor）经 agent 凭据加入同一世界。
 
-详见 [DESIGN.md](DESIGN.md)。
+详见 [DESIGN_V4.md](DESIGN_V4.md)（v4 设计）与 [DESIGN.md](DESIGN.md)（v3 现状）。
 
 ## 开发者
 
@@ -100,6 +121,6 @@ python -m ruff format --check .     # 格式检查
 
 ## 项目
 
-[更新记录](CHANGELOG.md) · [设计文档](DESIGN.md) · [贡献指南](CONTRIBUTING.md) · [版本发布](https://github.com/Rail1bc/astrbot_plugin_worlditor/releases) · [问题反馈](https://github.com/Rail1bc/astrbot_plugin_worlditor/issues)
+[更新记录](CHANGELOG.md) · [设计文档](DESIGN_V4.md) · [贡献指南](CONTRIBUTING.md) · [版本发布](https://github.com/Rail1bc/astrbot_plugin_worlditor/releases) · [问题反馈](https://github.com/Rail1bc/astrbot_plugin_worlditor/issues)
 
-世界编辑器使用 [AGPL-3.0 许可证](LICENSE) 发布。
+世界底子使用 [AGPL-3.0 许可证](LICENSE) 发布。
