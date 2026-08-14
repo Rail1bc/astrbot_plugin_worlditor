@@ -1,0 +1,9 @@
+# 内置参考玩法包（SDK 模板，可删除，B6）
+name: worlditor_play_demo
+display_name: 演示玩法包
+version: 0.1.0
+author: worlditor
+desc: 内置参考玩法包：演示 item / entity_kind / interaction / event 完整链路，充当玩法包开发模板，可删除。
+requires:
+  worlditor: ">=4.0.0"
+  plays: [] # v4.0 仅声明，解析 v4.2
