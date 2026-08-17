@@ -25,13 +25,15 @@
         │  注册表 API（唯一入口，锁内执行，异常/namespace 隔离）
         ▼
 内核 worlditor（v5）
-  ├─ 事实层：地块/连接/模板 + 实体（**字段化**，D9）+ 玩法数据 KV + 日志
-  │          （SQLite WAL，全量内存快照；无 items/inventories，D8）
-  ├─ 原语：place_entity / remove_entity / move_entity /
-  │         set_data / get_data / interact（effects 内核结算）
-  │         （无物品/背包原语——D8；无 say——D1；无路径移动——D6）
+  ├─ 事实层：地块/连接/模板 + 实体（**字段化**，D9）+ **物品定义（字段化，D8）**
+  │          + 玩法数据 KV + 日志（SQLite WAL，全量内存快照；无背包持有表）
+  ├─ 原语（D11：全部可被玩法包覆盖/禁用）：
+  │    place_entity / remove_entity / move_entity /
+  │    move（路径移动，默认实现 = 读 connections → 抽目标）/ 
+  │    set_data / get_data / interact（effects 内核结算）
+  │    （无背包原语——D8 持有下沉；无 say——D1）
   ├─ 身份：账户 / token 三档 / auth_mode / 邀请码 / 吊销（不可下沉）
-  ├─ 编辑：地块/连接/地图/实体数据编辑（admin 权限，含多地图）
+  ├─ 编辑：地块/连接/地图/实体与物品定义编辑（admin 权限，含多地图）
   ├─ 管理：玩法包 list / enable / disable / uninstall + 状态持久化（内置能力）
   ├─ 传输：MCP（streamable HTTP + stdio，连接即身份验证）+
   │        REST 非动作端点 + SSE + 内置 WebUI（玩法包视图宿主）
@@ -45,20 +47,22 @@
 |---|---|
 | 事实模型与持久化（地块/实体/KV/日志/身份表 + 并发锁 + 级联清理） | 数据正确性：世界结构不会因玩法包代码漂移而失控 |
 | 身份与凭据（token→实体、auth_mode、三档权限、吊销） | 安全：工具由玩法包注册后，"调用者是谁"仍由内核裁定 |
-| 基础原语（place/remove/move_entity/set_data/get_data/interact，**无物品背包、无 say**） | 行为层地基：玩法包移动 = 读连接 → 调 move_entity；说话 = emit 事件 |
+| 基础原语（place/remove/move_entity/move/set_data/get_data/interact，**无背包持有、无 say**） | 行为层地基；原语默认实现由内核提供，但**可被玩法包覆盖/禁用**（D11） |
 | 事件总线基础设施（订阅/分发/异常隔离/日志） | 机制留内核，事件语义与自定义事件开放给玩法包 |
 | MCP 传输层 + 连接认证 + 身份注入 | 通道留内核，工具内容玩法包注册 |
 | 地图编辑权限与编辑原语 | 世界内容治理（admin） |
 | UI 渲染协议（UiBlock schema） | 协议留内核，视图内容玩法包提供 |
 | **玩法包管理**（list/enable/disable/uninstall） | 管理"扩展机制"本身，天然属于内核 admin 域 |
 
-> **已下沉（不在内核）**：物品与背包（D8——背包模型/整理玩法包自定）、
-> 说话与广播（D1）、路径移动规则（D6）、一切玩法数据语义（字段由玩法包声明/读写）。
+> **已下沉（不在内核）**：背包持有（D8——背包模型/整理玩法包自定）、
+> 说话与广播（D1）、玩法数据语义（字段由玩法包声明/读写）。
+> **内核提供但玩法包可覆盖/禁用**：move 等全部原语（D11——如"前进/后退"
+> 方向移动玩法包可重写 move）。
 
-## 2.5 实体模型 v5（字段化，D9）
+## 2.5 实体模型 v5（字段化 + 分类，D9 / D10）
 
-实体只保留**最小身份与位置**，一切数据以**字段**承载——由玩法包按 kind 声明
-schema（UI 可通用渲染），且任意实体可追加未声明字段（实例级扩展）。
+实体只保留**最小身份与位置**，一切数据以**字段**承载；实体类型（kind）可挂
+**分类标签**，供玩法包精准选取一组实体类型（D10）。
 
 ```python
 @dataclass
@@ -70,21 +74,61 @@ class Entity:
     col: int
     name: str        # 显示主元素
     desc: str = ""
-    data: dict = {}  # 字段：kind 声明字段 ∪ 实例自定义字段（内核不解释）
+    data: dict = {}  # 字段：kind 声明 ∪ 分类声明 ∪ 实例自定义（内核不解释）
     user_id: str | None = None   # 身份化实体绑定
     last_active_ts: float = 0.0
 ```
 
 - **kind 字段声明**：`register_entity_kind(kind, ..., fields=[{name, label, type, default?}])`
-  ——类型（str/int/float/bool/json）用于 UI 通用渲染（角色卡/编辑表单）；
-  未声明的 kind 无字段，实体即"位置 + 名字"。
-- **实例字段**：`set_data(entity_id, name, value)` 可写**任意字段名**（不必 kind
-  声明）——"向已有实体内加字段"；未声明字段 UI 降级为通用键值展示。
-- **合并读写**：`set_data(patch)` 合并写；`get_data()` 全量读。替代 v4 的
-  attrs/state 双 dict（内核不再区分"玩法数据/状态"——语义由玩法包定义）。
+  ——类型（str/int/float/bool/json）用于 UI 通用渲染（角色卡/编辑表单）。
+- **向已有 kind 追加字段**（D9 扩展）：`add_kind_fields(kind, fields)`——任何玩法包
+  可在其他包注册的 kind 上追加字段（如给 monster 加 poison）。
+- **分类标签**（D10）：`register_entity_kind(..., categories=("生物",))`——kind 挂
+  标签（宽松，无需预注册）；**分类字段** `add_category_fields("生物", [hp])`——
+  该分类所有 kind 的有效字段（运行时合并：kind 有效字段 = kind 声明 ∪ 所属分类声明）。
+- **实例字段**：`set_data(entity_id, name, value)` 可写**任意字段名**（buff 等
+  临时效果，无需任何声明）；未声明字段 UI 降级通用键值展示。
+- **精准选取**：`list_kinds(category=None)` 按分类查询（如"给所有生物加血量"=
+  分类字段声明；"战斗目标 = 同地块生物" = list_kinds(category="生物") 筛实体）。
 - **阻挡判定**：`data["block_move"]` 优先于 kind 声明（门开/关玩法包写字段）。
-- 实体**无内置物品/背包字段**（D8）——背包内容玩法包自管（存在 data 字段、
-  KV 或其他自定义表均可）。
+- 实体**无内置背包字段**（D8）——背包内容玩法包自管。
+
+## 2.6 物品定义（D8：定义回内核，持有下沉）
+
+物品与实体同构：**内核只定义物品类型，字段可玩法包扩展；持有（背包）下沉**。
+
+```python
+@dataclass
+class ItemDef:
+    id: str          # 类型键（如 apple），物品定义即"类型"
+    name: str
+    desc: str = ""
+    data: dict = {}  # 字段（同实体字段机制：定义时声明 + 玩法包可追加）
+```
+
+- `register_item_def(item, fields=[...])` 定义物品类型（字段 schema 同 kind）；
+  `add_item_fields(item_id, fields)` 向已有物品类型追加字段（如给苹果加 price）。
+- 物品字段机制与实体字段**共用同一套"数据字段"设施**（schema 声明 / 合并 /
+  UI 通用渲染）。
+- **持有/背包不在内核**：谁持有多少、有限格子、堆叠、整理，全由玩法包实现
+  （可存实体实例字段、KV 或自定义结构）。
+
+## 2.7 原语覆盖机制（D11：内核能力可被玩法包关闭/重写）
+
+内核提供全部原语**默认实现**（move = 路径移动：读 connections → 按权重抽目标
+→ move_entity；interact = 交互通道；set_data/get_data = 字段读写…）。玩法包
+可**关闭或重写**任一原语：
+
+| API | 语义 |
+|---|---|
+| `override_primitive(name, handler)` | 替换默认实现（handler 签名与原语一致）；每原语同时至多一个覆盖者，第二个报错（同 D2） |
+| `disable_primitive(name)` | 关闭该能力（调用抛"该能力已被禁用"） |
+
+- **覆盖范围**：全部原语（place/remove/move/move_entity/set_data/get_data/
+  interact）——如"前进/后退"玩法包重写 move（基于实体朝向字段）；身份与
+  管理、编辑权限不可覆盖（红线）。
+- 覆盖/禁用状态**管理页可见**（哪个包覆盖了什么、谁禁用了什么）。
+- 事件/日志照常记录（被覆盖的调用走同一分派入口）。
 
 ## 3. 玩法包体系
 
@@ -92,9 +136,9 @@ class Entity:
 
 | 玩法包 | 领域 | 贡献 |
 |---|---|---|
-| `worlditor_play_items` | 物品与背包（**全玩法化，D8**） | **物品数据模型与背包模型自定**（有限格子/单物品多格/堆叠由本包实现）、物品 use 规则、背包整理（玩家可用）、背包视图、world_bag/world_use 工具 |
+| `worlditor_play_items` | 背包与物品使用（**持有下沉，D8**） | **背包模型自定**（有限格子/单物品多格/堆叠/整理）、物品 use 规则、背包视图、world_bag/world_use 工具；物品**定义**由内核提供（字段化，本包声明基础物品字段） |
 | `worlditor_play_player` | 玩家 | 玩家实体行为、出生礼包、角色视图 |
-| `worlditor_play_movement` | 移动与视野 | **移动规则**（读 connections → 选目标 → move_entity）、3×3 视野视图、world_look/world_move/world_who 工具 |
+| `worlditor_play_movement` | 移动与视野 | **默认移动 = 内核 move（路径移动，D11）**；本包提供视野视图（3×3）、world_look/world_move/world_who 工具，并可在需要时 override move（如朝向移动） |
 | `worlditor_play_interaction` | 交互 | 交互弹窗编排、动作菜单、world_interact 工具 |
 | `worlditor_play_social` | 说话与广播 | **说话规则（D1：内核无 say）**：cell 级说话、world 级广播（**喇叭物品由本包自行定义** + 冷却自管）、world_say 工具、日志视图 |
 
@@ -123,8 +167,9 @@ class Entity:
 | MCP 动态工具 | `api.register_tool(name, schema, handler)`；handler 经 `api.caller()` 拿当前身份，权限按 token 档位裁定；同名工具冲突报错拒绝（D2） |
 | 自定义事件 | `api.emit(event, **data)` + 任意事件名订阅；SSE 序列化/world_log 通用化——**说话下沉的通道**（D1：social 包 emit 说话语义事件） |
 | 视图宿主 | `api.register_view(key, {title, icon, provider})`；WebUI 渲染玩法包视图（世界页=movement、背包=items、角色=player、日志=social；社区可加新页） |
-| 实体字段 | `register_entity_kind(fields=[...])` kind 级 schema；`set_data`/`get_data` 读写（含实例任意字段，D9） |
-| WorlditorPlayAPI 增补 | +register_tool / +emit / +register_view / +caller / +set_data / +get_data / kind fields |
+| 数据字段设施 | kind/物品字段声明与追加、分类字段、实例任意字段（D9/D10）；`set_data`/`get_data`、`list_kinds(category)` |
+| 原语覆盖 | `override_primitive` / `disable_primitive`（D11），状态管理页可见 |
+| WorlditorPlayAPI 增补 | +register_tool / +emit / +register_view / +caller / +set_data / +get_data / +add_kind_fields / +add_category_fields / +list_kinds / +override_primitive / +disable_primitive / +register_item_def（字段化）/ +add_item_fields |
 
 ## 4. 项目重开形态（D4 已确认：同仓库重开，版本继续 v0.4.0）
 
@@ -136,8 +181,8 @@ git 历史保留（v0.3.0 随时可 checkout 复用），代码结构按新架�
 | 来源 | 去向 | 说明 |
 |---|---|---|
 | `world/v3model.py` | 原样 | 地块/连接/TextSchedule/模板——数据模型稳定 |
-| `world/store.py` + `world/v4store.py` | 复制删减 | maps/locations/templates/world_meta + play_data/world_log + accounts/tokens/invite_codes 原样；**entities 表改为字段化（data_json，删 attrs/state）；删除 items/inventories 表（D8）** |
-| `world/v4engine.py` 机制部分 | 复制删减 | move_entity / interact+effects / 事件总线（开放任意事件名 + emit）/ 地图编辑原语 / 订阅；**删除**：move（路径移动）、say（D1）、give/take/count 与物品（D8）、7 工具注册；attrs/state → set_data/get_data 字段体系（D9） |
+| `world/store.py` + `world/v4store.py` | 复制删减 | maps/locations/templates/world_meta + play_data/world_log + accounts/tokens/invite_codes 原样；**entities 表字段化（data_json，删 attrs/state）；items 表保留但仅定义（字段化，删 stackable/use_action 等玩法字段入 data）；删除 inventories 表（D8）** |
+| `world/v4engine.py` 机制部分 | 复制删减 | move（保留为默认实现，走原语分派 D11）/ move_entity / interact+effects / 事件总线（开放任意事件名 + emit）/ 地图编辑原语 / 订阅；**删除**：say（D1）、give/take/count 与持有（D8）、7 工具注册；attrs/state → set_data/get_data 字段体系（D9）；新增原语分派（override/disable）与字段/分类注册表 |
 | `world/identity.py` | 原样 | 身份红线 |
 | `world/mcp/http.py` + `stdio.py` | 原样删减 | 传输/认证/世界服务端点（/auth /state /scene /events /admin）；**删除**：内置 7 工具注册（改动态）、/bag（背包下沉 items 包）；/events 出口支持玩法包自定义事件通用 payload |
 | `api/` | 复制 | admin 端点（地图编辑含实体放置）等非动作端点 |
@@ -167,10 +212,12 @@ M4 验证与收尾：一个"替代玩法包"（如同方向延伸视野+朝向�
 | D3 | demo_play | **删除**（领域包兼作 SDK 模板，避免双份维护） |
 | D4 | 重开形态 | **同仓库重开，版本继续 v0.4.0**（git 历史保留，旧代码可 checkout 复用） |
 | D5 | 内置包默认状态 | **默认全部启用**，管理页可停用（停用有"将失去对应能力"提示） |
-| D6 | 移动规则归属 | 移动 = movement 包注册的规则（读 connections → 选目标 → move_entity），内核无默认 |
+| D6 | ~~移动规则归属~~ | **已被 D11 取代**（移动回归内核默认实现，玩法包可覆盖） |
 | D7 | 视图宿主形态 | WebUI 仅渲染玩法包视图；内核保留登录、token、数据通道与兜底"无视图"提示 |
-| D8 | 物品与背包归属 | **全下沉玩法包**：内核无 items/inventories 表与 give/take/count 原语——背包模型（有限格子/单物品多格/堆叠）与背包整理由 items 包自定；喇叭等道具由 social 等包自行定义 |
-| D9 | 实体数据形态 | **字段化**：实体 = id/kind/位置/name/desc + `data` 字段（内核不解释）；kind 注册可声明字段 schema（UI 通用渲染），实例可写任意未声明字段 |
+| D8 | 物品与背包归属 | **定义回内核，持有下沉**：物品 = 内核 `ItemDef`（类型，字段化，玩法包可追加字段）；背包（有限格子/单物品多格/堆叠/整理）与持有关系全由玩法包自定；无 inventories 表 |
+| D9 | 实体数据形态 | **字段化**：实体 = id/kind/位置/name/desc + `data` 字段（内核不解释）；kind 注册可声明字段 schema（UI 通用渲染）；**可向已有 kind 追加字段**；**实例可写任意未声明字段**（buff 等临时效果） |
+| D10 | 实体分类标签 | kind 可挂 `categories` 标签；**分类字段**（add_category_fields）使该分类全部 kind 获得字段；`list_kinds(category)` 精准选取（如"给所有生物加血量"） |
+| D11 | 移动与内核能力覆盖 | **移动收束内核**（默认 = 路径移动：读 connections → 抽目标）；**全部原语可被玩法包 override/disable**（每原语至多一个覆盖者，第二个报错；禁用后调用报错）；覆盖状态管理页可见 |
 
 ## 8. 与现行版关系
 
