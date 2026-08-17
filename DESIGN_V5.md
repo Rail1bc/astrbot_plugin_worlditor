@@ -1,9 +1,9 @@
 # worlditor 重构设计 v5（定稿）——项目重开：内核纯数据，玩法包承载一切
 
-> 状态：**设计定稿**（2026-08，D1–D11 已确认）。基于 v0.3.0 实际运行经验与多轮
-> 讨论重开设计。配套：DESIGN_V4.md（现行架构，v0.3.0 已实现）。v5 为**项目重开**：
-> 保留有价值的代码（复制复用），行为层整体以"玩法包"身份重写。
-> 本文件是唯一权威设计文档。
+> 状态：**设计定稿**（2026-08，D1–D13 已确认）。基于 v0.3.0 实际运行经验与多轮
+> 讨论重开设计。配套：DESIGN_V4.md（现行架构，v0.3.0 已实现）。v5 为**开发阶段
+> 完全重构**：保留有价值的代码（复制复用），行为层整体以"玩法包"身份重写；
+> 旧数据不保留（D13），零历史债务。本文件是唯一权威设计文档。
 
 ## 0. 一句话定位
 
@@ -31,7 +31,7 @@
   ├─ 原语（默认实现，全部可被玩法包覆盖/禁用，D11）：
   │    place_entity / remove_entity / move_entity /
   │    move（路径移动：读 connections → 抽目标）/
-  │    set_data / get_data / interact（effects 内核结算）
+  │    set_data / get_data / interact（effects 内核结算，op 白名单见 D12）
   │    （无背包原语——D8 持有下沉；无 say——D1）
   ├─ 身份：账户 / token 三档 / auth_mode / 邀请码 / 吊销（不可下沉）
   ├─ 编辑：地块/连接/地图/实体与物品定义编辑（admin 权限，含多地图）
@@ -65,7 +65,7 @@
 | `move` | 路径移动（身份化实体） | 内核：读 connections → 按权重抽目标（死引用剔除） |
 | `move_entity(map,row,col)` | 直接位移（行为驱动，传送语义） | 内核 |
 | `set_data` / `get_data` | 字段读写（合并写 / 全量读） | 内核 |
-| `interact` | 交互通道：handler + effects 内核结算 | 内核 |
+| `interact` | 交互通道：handler + effects 内核结算（op 白名单 {move, move_entity, set_data}，D12） | 内核 |
 
 所有原语默认实现由内核提供，但**可被玩法包覆盖/禁用**（§2.4，D11）。
 
@@ -210,6 +210,7 @@ class ItemDef:
 | 视野视图（3×3 或任意形态） | movement 包（register_view） |
 | 玩家出生礼包 / 角色视图 | player 包 |
 | 交互弹窗编排 / 动作菜单 | interaction 包 |
+| 种子演示实体（商贩/告示牌/木门）的 kind 与交互 | interaction 包（实体本身由内核播种，D13） |
 | 日志视图 | social 包 |
 | 登录/注册/身份 | 内核 |
 | 地图编辑 / 玩法包管理 UI | 内核（admin） |
@@ -218,10 +219,10 @@ class ItemDef:
 
 | 玩法包 | 领域 | 贡献 |
 |---|---|---|
-| `worlditor_play_items` | 背包与物品使用（持有下沉，D8） | 背包模型自定（有限格子/单物品多格/堆叠/整理）、物品 use 规则、背包视图、world_bag/world_use 工具；声明基础物品字段 |
+| `worlditor_play_items` | 背包与物品使用（持有下沉，D8） | 背包模型自定（有限格子/单物品多格/堆叠/整理）、物品 use 规则、背包视图、world_bag/world_use 工具；注册基础物品定义（苹果等）并声明字段 |
 | `worlditor_play_player` | 玩家 | 玩家实体行为、出生礼包、角色视图 |
 | `worlditor_play_movement` | 移动与视野 | 默认移动 = 内核 move；视野视图（3×3）、world_look/world_move/world_who 工具；可按需 override move |
-| `worlditor_play_interaction` | 交互 | 交互弹窗编排、动作菜单、world_interact 工具 |
+| `worlditor_play_interaction` | 交互 | 交互弹窗编排、动作菜单、world_interact 工具；注册种子演示实体的 kind 与交互（merchant/sign/door：talk/trade/read/open） |
 | `worlditor_play_social` | 说话与广播 | cell 说话 / world 广播（喇叭物品自行定义 + 冷却自管）、world_say 工具、日志视图 |
 
 **协作模型：事件驱动，零包间调用**——移动包更新位置 → 内核发 `on_entity_move`
@@ -241,7 +242,7 @@ class ItemDef:
 | 来源 | 去向 | 说明 |
 |---|---|---|
 | `world/v3model.py` | 原样 | 地块/连接/TextSchedule/模板——数据模型稳定 |
-| `world/store.py` + `world/v4store.py` | 复制删减 | maps/locations/templates/world_meta + play_data/world_log + accounts/tokens/invite_codes 原样；entities 表字段化（data_json，删 attrs/state）；items 表仅定义（字段化，stackable/use_action 等玩法字段入 data）；**删除 inventories 表**（D8） |
+| `world/store.py` + `world/v4store.py` | 复制删减 | maps/locations/templates/world_meta + play_data/world_log + accounts/tokens/invite_codes 原样；entities 表字段化（data_json，删 attrs/state）；items 表仅定义（字段化，stackable/use_action 等玩法字段入 data）；**删除 inventories 表**（D8）；旧库数据不保留（D13） |
 | `world/v4engine.py` 机制部分 | 复制删减 | move（保留为默认实现，走原语分派）/ move_entity / interact+effects / 事件总线（开放任意事件名 + emit）/ 地图编辑原语 / 订阅；删除 say（D1）、give/take/count 与持有（D8）、7 工具注册；attrs/state → set_data/get_data 字段体系（D9）；新增原语分派（override/disable）与字段/分类注册表 |
 | `world/identity.py` | 原样 | 身份红线 |
 | `world/mcp/http.py` + `stdio.py` | 原样删减 | 传输/认证/世界服务端点（/auth /state /scene /events /admin）；删除内置 7 工具注册（改动态）、/bag（背包下沉）；/events 出口支持玩法包自定义事件通用 payload |
@@ -250,6 +251,19 @@ class ItemDef:
 | `webui/` 框架 | 复制改造 | App/路由/登录/token/MCP client/store/样式 → 视图宿主；页面内容改由玩法包视图提供 |
 | `demo_play/` | 删除（D3） | 领域包即 SDK 模板 |
 | 测试 | 迁移 | 数据层/身份/传输测试保留；物品/背包/移动/说话测试迁到各领域包 |
+
+### 7.3 数据策略：空库重建，不保留（D13）
+
+v5 是**开发阶段完全重构**：不兼容旧数据、不迁移、不备份、不写任何检测/兼容
+分支——**零历史债务**。
+
+- 启动即重建：旧库文件（`world.db` 及其 `-wal` / `-shm`）直接删除后建新库；
+  旧账号 / 地图编辑成果 / 背包 / 日志全部不保留（`-wal`/`-shm` 必须同删，
+  否则残留日志会被新库误当 WAL 应用，出现幽灵数据）。
+- 无 `schema_version` 检测与迁移逻辑；旧代码仅存在于 git 历史（D4），主线
+  不含任何 v4 兼容代码。
+- 新库播种：41 地块 + 3 个种子演示实体（内核，实体 kind 与交互由 interaction
+  包注册）；物品定义全部由玩法包注册（内核仅保留 D1 喇叭定义）。
 
 ## 8. 分阶段路线（每阶段可独立发布/验证）
 
@@ -265,7 +279,7 @@ M4 验证与收尾：一个"替代玩法包"（如同方向延伸视野 / 朝向
    测试迁移完成；docs/PLAY_DEV.md；版本发布 v0.4.0
 ```
 
-## 9. 决策记录（D1–D11，已全部确认）
+## 9. 决策记录（D1–D13，已全部确认）
 
 | # | 决策点 | 结论 |
 |---|---|---|
@@ -280,9 +294,12 @@ M4 验证与收尾：一个"替代玩法包"（如同方向延伸视野 / 朝向
 | D9 | 实体数据形态 | **字段化**：实体 = id/kind/位置/name/desc + data 字段（内核不解释）；kind 注册可声明字段 schema（UI 通用渲染）；可向已有 kind 追加字段；实例可写任意未声明字段（buff 等临时效果） |
 | D10 | 实体分类标签 | kind 可挂 categories 标签；分类字段（add_category_fields）使该分类全部 kind 获得字段；list_kinds(category) 精准选取（如"给所有生物加血量"） |
 | D11 | 移动与内核能力覆盖 | **移动收束内核**（默认 = 路径移动：读 connections → 抽目标）；**全部原语可被玩法包 override/disable**（每原语至多一个覆盖者，第二个报错；禁用后调用报错）；覆盖状态管理页可见 |
+| D12 | effects 结算 op 集 | **收窄为内核原语白名单 {move, move_entity, set_data}**（结算走原语分派，D11 一致）；物品/说话类副作用由玩法包命令式自理（与 D1/D8 一致）；interact/emit 不入 effects（防连锁环；事件是副作用不是变更） |
+| D13 | 旧数据与库形态 | **数据不保留**：v5 为开发阶段完全重构，空库重建——启动删旧库（含 -wal/-shm），无迁移、无备份、无检测分支，零历史债务；旧账号/地图/背包/日志全部清除 |
 
 ## 10. 与现行版关系
 
-- v0.3.0 继续可用（git 历史）；重构完成前不破坏
-- 重构完成后 v5 成为主线（v0.4.0 起），旧代码仅历史参考
+- **v5 = 开发阶段完全重构，不保留任何历史债务**：升级即空库重建（D13），
+  旧数据（账号/地图/背包/日志）不保留；无迁移、无备份、无兼容分支
+- v0.3.0 仅存于 git 历史（D4）供参考/复用，主线不含 v4 兼容代码
 - 所有玩法包（内置+社区）面向同一套内核 API 与协议，无 v3/v4 之分
