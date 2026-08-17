@@ -230,7 +230,7 @@ function scheduleEditor(value) {
       items.className = "schedule-items";
       (p.items || []).forEach((it, ii) => {
         items.appendChild(
-          itemEl(p, pi, ii, () => {
+          itemEl(it, p, pi, ii, () => {
             p.items.splice(ii, 1);
             rebuildAdvanced();
           })
@@ -256,7 +256,7 @@ function scheduleEditor(value) {
       });
       return wrap;
 
-      function itemEl(p, pi, ii, onRemove) {
+      function itemEl(it, p, pi, ii, onRemove) {
         const row = document.createElement("div");
         row.className = "schedule-item";
         const t = textInput(it.text, "文本");
