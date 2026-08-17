@@ -11,9 +11,10 @@ export function getToken() {
 }
 
 export function setToken(token) {
-  if (token) {
+  if (typeof token === "string" && token) {
     localStorage.setItem(TOKEN_KEY, token);
   } else {
+    // 防御：非字符串（如误传对象）一律清空，避免 localStorage 存 "[object Object]"
     localStorage.removeItem(TOKEN_KEY);
   }
 }

@@ -90,9 +90,15 @@ async function submitAgent() {
   }
 }
 
-function enter(token) {
-  setToken(token);
-  store.token = token;
+function enter(tokenData) {
+  // 接口返回 {ok, token: {token, ...}}——兼容传对象或字符串
+  const t = typeof tokenData === "string" ? tokenData : tokenData && tokenData.token;
+  if (!t) {
+    error.value = "未获取到有效凭据";
+    return;
+  }
+  setToken(t);
+  store.token = t;
   location.hash = "#/world";
 }
 </script>
