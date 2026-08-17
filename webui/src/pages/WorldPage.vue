@@ -8,21 +8,23 @@
           scene
             ? scene.description
             : watching
-              ? "只读围观：点击地图上的实体可查看"
+              ? "只读围观：点击相邻地块可浏览"
               : "加载中……"
         }}
       </p>
       <span v-if="store.connected" class="live-dot" title="实时连接"></span>
     </header>
 
-    <!-- 地图 -->
+    <!-- 地图：纯玩家有限视角（当前地块 + 四周相邻） -->
     <div class="map-wrap">
       <WorldMap
         :locations="store.world?.locations || []"
         :entities="store.world?.entities || []"
-        :current-pos="myPos"
+        :center="center"
         :player-pos="myPos"
+        :browsable="watching"
         @select-entity="openEntity"
+        @select-location="browseTo"
       />
     </div>
 
@@ -90,6 +92,18 @@ const myPos = computed(() =>
     : null,
 );
 const peers = computed(() => store.peers);
+// 围观者浏览中心（点击相邻地块切换；玩家视角固定跟随自己）
+const browseCenter = ref(null);
+// 视野中心：玩家位置优先；围观者用出生点/浏览位置
+const spawnPos = computed(() => {
+  const m = store.world?.maps?.[0];
+  return m ? { map_id: m.id, row: m.spawn_row, col: m.spawn_col } : null;
+});
+const center = computed(() => browseCenter.value || myPos.value || spawnPos.value);
+
+function browseTo(loc) {
+  browseCenter.value = { map_id: loc.map_id, row: loc.row, col: loc.col };
+}
 
 const DIR_LABELS = { up: "北", right: "东", down: "南", left: "西" };
 const dirLabel = (d) => DIR_LABELS[d] || d;

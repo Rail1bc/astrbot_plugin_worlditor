@@ -58,7 +58,8 @@ body {
   padding: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 /* ---------- 通用 ---------- */
@@ -269,18 +270,17 @@ body {
 }
 
 .map-wrap {
-  flex: 1;
-  min-height: 200px;
-  position: relative;
-  touch-action: none;
+  padding: 10px 0 4px;
+  display: flex;
+  justify-content: center;
 }
 
 .world-map {
-  width: 100%;
-  height: 100%;
-  position: relative;
-  overflow: hidden;
+  width: min(100% - 20px, 330px);
+  aspect-ratio: 1;
   background: var(--bg);
+  border-radius: var(--radius);
+  overflow: hidden;
 }
 
 .map-svg {
@@ -297,18 +297,27 @@ body {
 
 .loc-cell.current {
   fill: var(--accent-dim);
-  opacity: 0.5;
+  opacity: 0.6;
+}
+
+.loc-cell.browsable {
+  cursor: pointer;
+}
+
+.loc-cell.browsable:hover {
+  filter: brightness(1.3);
 }
 
 .loc-name {
   fill: var(--text-dim);
-  font-size: 9px;
+  font-size: 10px;
   pointer-events: none;
 }
 
 .entity-dot {
   stroke: #fff;
-  stroke-width: 1;
+  stroke-width: 1.5;
+  cursor: pointer;
 }
 
 .entity-dot.kind-player {
@@ -323,26 +332,10 @@ body {
   fill: var(--accent);
 }
 
-.entity-name {
-  fill: var(--text);
-  font-size: 9px;
-  cursor: pointer;
-}
-
-.player-ring {
-  fill: none;
-  stroke: #6ec3ff;
+.player-mark {
+  fill: #6ec3ff;
+  stroke: #fff;
   stroke-width: 2;
-  opacity: 0.7;
-}
-
-.map-controls {
-  position: absolute;
-  right: 10px;
-  bottom: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
 }
 
 .peer-bar {
