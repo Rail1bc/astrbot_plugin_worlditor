@@ -25,10 +25,11 @@
         │  注册表 API（唯一入口，锁内执行，异常/namespace 隔离）
         ▼
 内核 worlditor（v5）
-  ├─ 事实层：地块/连接/模板 + 实体/物品/背包/日志（SQLite WAL，全量内存快照）
-  ├─ 原语：place_entity / remove_entity / move_entity / set_attrs / set_state /
-  │         give_item / take_item / count_item / interact（effects 内核结算）
-  │         （无 say——说话能力全部下沉玩法包，D1）
+  ├─ 事实层：地块/连接/模板 + 实体（**字段化**，D9）+ 玩法数据 KV + 日志
+  │          （SQLite WAL，全量内存快照；无 items/inventories，D8）
+  ├─ 原语：place_entity / remove_entity / move_entity /
+  │         set_data / get_data / interact（effects 内核结算）
+  │         （无物品/背包原语——D8；无 say——D1；无路径移动——D6）
   ├─ 身份：账户 / token 三档 / auth_mode / 邀请码 / 吊销（不可下沉）
   ├─ 编辑：地块/连接/地图/实体数据编辑（admin 权限，含多地图）
   ├─ 管理：玩法包 list / enable / disable / uninstall + 状态持久化（内置能力）
@@ -42,14 +43,48 @@
 
 | 红线 | 理由 |
 |---|---|
-| 事实模型与持久化（全部表 + 并发锁 + 级联清理） | 数据正确性：玩法包再怎么写，背包账目不会错 |
+| 事实模型与持久化（地块/实体/KV/日志/身份表 + 并发锁 + 级联清理） | 数据正确性：世界结构不会因玩法包代码漂移而失控 |
 | 身份与凭据（token→实体、auth_mode、三档权限、吊销） | 安全：工具由玩法包注册后，"调用者是谁"仍由内核裁定 |
-| 基础原语（place/remove/move_entity/set_attrs/set_state/give/take/count/interact，**无 say**） | 行为层地基：玩法包移动 = 读连接 → 调 move_entity；说话 = 玩法包 emit 事件（D1） |
+| 基础原语（place/remove/move_entity/set_data/get_data/interact，**无物品背包、无 say**） | 行为层地基：玩法包移动 = 读连接 → 调 move_entity；说话 = emit 事件 |
 | 事件总线基础设施（订阅/分发/异常隔离/日志） | 机制留内核，事件语义与自定义事件开放给玩法包 |
 | MCP 传输层 + 连接认证 + 身份注入 | 通道留内核，工具内容玩法包注册 |
 | 地图编辑权限与编辑原语 | 世界内容治理（admin） |
 | UI 渲染协议（UiBlock schema） | 协议留内核，视图内容玩法包提供 |
 | **玩法包管理**（list/enable/disable/uninstall） | 管理"扩展机制"本身，天然属于内核 admin 域 |
+
+> **已下沉（不在内核）**：物品与背包（D8——背包模型/整理玩法包自定）、
+> 说话与广播（D1）、路径移动规则（D6）、一切玩法数据语义（字段由玩法包声明/读写）。
+
+## 2.5 实体模型 v5（字段化，D9）
+
+实体只保留**最小身份与位置**，一切数据以**字段**承载——由玩法包按 kind 声明
+schema（UI 可通用渲染），且任意实体可追加未声明字段（实例级扩展）。
+
+```python
+@dataclass
+class Entity:
+    id: str          # uuid4 hex
+    kind: str        # 种类（player/agent 内置或玩法包注册）
+    map_id: str      # 位置
+    row: int
+    col: int
+    name: str        # 显示主元素
+    desc: str = ""
+    data: dict = {}  # 字段：kind 声明字段 ∪ 实例自定义字段（内核不解释）
+    user_id: str | None = None   # 身份化实体绑定
+    last_active_ts: float = 0.0
+```
+
+- **kind 字段声明**：`register_entity_kind(kind, ..., fields=[{name, label, type, default?}])`
+  ——类型（str/int/float/bool/json）用于 UI 通用渲染（角色卡/编辑表单）；
+  未声明的 kind 无字段，实体即"位置 + 名字"。
+- **实例字段**：`set_data(entity_id, name, value)` 可写**任意字段名**（不必 kind
+  声明）——"向已有实体内加字段"；未声明字段 UI 降级为通用键值展示。
+- **合并读写**：`set_data(patch)` 合并写；`get_data()` 全量读。替代 v4 的
+  attrs/state 双 dict（内核不再区分"玩法数据/状态"——语义由玩法包定义）。
+- **阻挡判定**：`data["block_move"]` 优先于 kind 声明（门开/关玩法包写字段）。
+- 实体**无内置物品/背包字段**（D8）——背包内容玩法包自管（存在 data 字段、
+  KV 或其他自定义表均可）。
 
 ## 3. 玩法包体系
 
@@ -57,11 +92,11 @@
 
 | 玩法包 | 领域 | 贡献 |
 |---|---|---|
-| `worlditor_play_items` | 物品与背包 | 物品 use 规则、背包视图、world_bag/world_use 工具 |
+| `worlditor_play_items` | 物品与背包（**全玩法化，D8**） | **物品数据模型与背包模型自定**（有限格子/单物品多格/堆叠由本包实现）、物品 use 规则、背包整理（玩家可用）、背包视图、world_bag/world_use 工具 |
 | `worlditor_play_player` | 玩家 | 玩家实体行为、出生礼包、角色视图 |
 | `worlditor_play_movement` | 移动与视野 | **移动规则**（读 connections → 选目标 → move_entity）、3×3 视野视图、world_look/world_move/world_who 工具 |
 | `worlditor_play_interaction` | 交互 | 交互弹窗编排、动作菜单、world_interact 工具 |
-| `worlditor_play_social` | 说话与广播 | **说话规则（D1：内核无 say）**：cell 级说话、world 级广播（喇叭消耗 + 冷却，全部玩法化，用 items 数据 + kv/attrs 自管）、world_say 工具、日志视图 |
+| `worlditor_play_social` | 说话与广播 | **说话规则（D1：内核无 say）**：cell 级说话、world 级广播（**喇叭物品由本包自行定义** + 冷却自管）、world_say 工具、日志视图 |
 
 **协作模型：事件驱动，零包间调用**——移动包更新位置 → 内核发 `on_entity_move`
 → 视野/日志包各自订阅刷新。包只依赖内核数据与事件，不依赖其他包存在与否；
@@ -85,31 +120,31 @@
 | 能力 | 说明 |
 |---|---|
 | plays 依赖解析 | `requires.plays` 加载顺序保证（社区包可声明依赖领域包） |
-| MCP 动态工具 | `api.register_tool(name, schema, handler)`；handler 经 `api.caller()` 拿当前身份，权限按 token 档位裁定；同名工具冲突策略见决策 D2 |
-| 自定义事件 | `api.emit(event, **data)` + 任意事件名订阅；SSE 序列化/world_log 通用化——**说话下沉的通道**（D1：social 包 emit on_say 语义事件） |
+| MCP 动态工具 | `api.register_tool(name, schema, handler)`；handler 经 `api.caller()` 拿当前身份，权限按 token 档位裁定；同名工具冲突报错拒绝（D2） |
+| 自定义事件 | `api.emit(event, **data)` + 任意事件名订阅；SSE 序列化/world_log 通用化——**说话下沉的通道**（D1：social 包 emit 说话语义事件） |
 | 视图宿主 | `api.register_view(key, {title, icon, provider})`；WebUI 渲染玩法包视图（世界页=movement、背包=items、角色=player、日志=social；社区可加新页） |
-| WorlditorPlayAPI 增补 | +register_tool / +emit / +register_view / +caller |
+| 实体字段 | `register_entity_kind(fields=[...])` kind 级 schema；`set_data`/`get_data` 读写（含实例任意字段，D9） |
+| WorlditorPlayAPI 增补 | +register_tool / +emit / +register_view / +caller / +set_data / +get_data / kind fields |
 
-## 4. 项目重开形态（决策 D4，待确认）
+## 4. 项目重开形态（D4 已确认：同仓库重开，版本继续 v0.4.0）
 
-建议：**同一仓库重开**——git 历史保留（v0.3.0 随时可 checkout 复用），代码结构
-按新架构重排，版本线重新规划（建议从 v0.4.0 继续，或重置 v0.1.0，见 D4）。
-不新建仓库（复制复用成本最低，历史对比方便）。
+git 历史保留（v0.3.0 随时可 checkout 复用），代码结构按新架构重排，
+版本线从 v0.4.0 继续，不新建仓库（复制复用成本最低，历史对比方便）。
 
 ## 5. 复用清单（从 v0.3.0 复制，已验证可用）
 
 | 来源 | 去向 | 说明 |
 |---|---|---|
 | `world/v3model.py` | 原样 | 地块/连接/TextSchedule/模板——数据模型稳定 |
-| `world/store.py` + `world/v4store.py` | 原样 | 全部表结构（maps/locations/templates/world_meta + entities/items/inventories/play_data/world_log + accounts/tokens/invite_codes） |
-| `world/v4engine.py` 机制部分 | 复制删减 | move_entity / interact+effects / set_attrs / set_state / give/take/count / 事件总线（**开放任意事件名 + emit**）/ 地图编辑原语 / 订阅；**删除**：move（路径移动）、say（含喇叭与冷却，D1）、7 工具注册 |
+| `world/store.py` + `world/v4store.py` | 复制删减 | maps/locations/templates/world_meta + play_data/world_log + accounts/tokens/invite_codes 原样；**entities 表改为字段化（data_json，删 attrs/state）；删除 items/inventories 表（D8）** |
+| `world/v4engine.py` 机制部分 | 复制删减 | move_entity / interact+effects / 事件总线（开放任意事件名 + emit）/ 地图编辑原语 / 订阅；**删除**：move（路径移动）、say（D1）、give/take/count 与物品（D8）、7 工具注册；attrs/state → set_data/get_data 字段体系（D9） |
 | `world/identity.py` | 原样 | 身份红线 |
-| `world/mcp/http.py` + `stdio.py` | 原样删减 | 传输/认证/世界服务端点（/auth /state /scene /bag /events /admin）；**删除**：内置 7 工具注册（改动态）；/events 出口支持玩法包自定义事件通用 payload |
+| `world/mcp/http.py` + `stdio.py` | 原样删减 | 传输/认证/世界服务端点（/auth /state /scene /events /admin）；**删除**：内置 7 工具注册（改动态）、/bag（背包下沉 items 包）；/events 出口支持玩法包自定义事件通用 payload |
 | `api/` | 复制 | admin 端点（地图编辑含实体放置）等非动作端点 |
-| `pages/world/*`（v3 编辑页） | 原样 | 编辑能力 UI（补多地图支持） |
+| `pages/world/*`（v3 编辑页） | 原样 | 编辑能力 UI（补多地图支持 + 实体字段编辑按 kind schema） |
 | `webui/` 框架 | 复制改造 | App/路由/登录/token/MCP client/store/样式 → 视图宿主；页面内容改由玩法包视图提供 |
-| `demo_play/` | 决策 D3 | 建议删除（领域包即模板） |
-| 测试 | 迁移 | 数据层/身份/传输测试保留；行为测试迁到各领域包 |
+| `demo_play/` | 删除（D3） | 领域包即 SDK 模板 |
+| 测试 | 迁移 | 数据层/身份/传输测试保留；物品/背包/移动/说话测试迁到各领域包 |
 
 ## 6. 分阶段路线（每阶段可独立发布/验证）
 
@@ -133,7 +168,9 @@ M4 验证与收尾：一个"替代玩法包"（如同方向延伸视野+朝向�
 | D4 | 重开形态 | **同仓库重开，版本继续 v0.4.0**（git 历史保留，旧代码可 checkout 复用） |
 | D5 | 内置包默认状态 | **默认全部启用**，管理页可停用（停用有"将失去对应能力"提示） |
 | D6 | 移动规则归属 | 移动 = movement 包注册的规则（读 connections → 选目标 → move_entity），内核无默认 |
-| D7 | 视图宿主形态 | WebUI 仅渲染玩法包视图；内核保留登录、token、背包数据通道与兜底"无视图"提示 |
+| D7 | 视图宿主形态 | WebUI 仅渲染玩法包视图；内核保留登录、token、数据通道与兜底"无视图"提示 |
+| D8 | 物品与背包归属 | **全下沉玩法包**：内核无 items/inventories 表与 give/take/count 原语——背包模型（有限格子/单物品多格/堆叠）与背包整理由 items 包自定；喇叭等道具由 social 等包自行定义 |
+| D9 | 实体数据形态 | **字段化**：实体 = id/kind/位置/name/desc + `data` 字段（内核不解释）；kind 注册可声明字段 schema（UI 通用渲染），实例可写任意未声明字段 |
 
 ## 8. 与现行版关系
 
