@@ -296,6 +296,46 @@ def test_unload_calls_teardown(tmp_path):
     _run(_play_scenario(tmp_path, fn))
 
 
+def test_plugin_alias_registration(tmp_path):
+    """AstrBot 真实环境（插件以 data.plugins.* 加载，顶层名缺失）下，
+    PlayLoader 把插件包注册顶层别名，玩法包按文档路径导入可用（同一模块对象）。"""
+
+    top = "astrbot_plugin_worlditor"
+    fake_root = "data.plugins." + top
+    # 先确保顶层 api 已加载（真实环境由 main 链加载 data.plugins.*.api）
+    import importlib
+
+    importlib.import_module(top + ".api")
+    # 模拟 AstrBot：把当前插件包以 data.plugins.* 名注册（同一模块对象）
+    sys.modules[fake_root] = sys.modules[top]
+    for k, mod in list(sys.modules.items()):
+        if k.startswith(top + "."):
+            sys.modules[fake_root + k[len(top) :]] = mod
+    # 临时移除顶层别名（真实环境只有 data.plugins.* 形式）
+    saved = {
+        k: sys.modules[k]
+        for k in list(sys.modules)
+        if k == top or k.startswith(top + ".")
+    }
+    for k in saved:
+        del sys.modules[k]
+    try:
+        loader = make_loader(tmp_path / "world.db", tmp_path / "plays")
+        loader.register_plugin_aliases()
+        # 顶层名已注册且指向同一模块对象（无双份加载）
+        assert sys.modules[top] is sys.modules[fake_root]
+        assert sys.modules[top + ".api"] is sys.modules[fake_root + ".api"]
+        # 按文档路径导入 == 真实包路径导入（同一类对象）
+        top_api = importlib.import_module(top + ".api")
+        real_api = importlib.import_module(fake_root + ".api")
+        assert top_api.WorlditorPlayAPI is real_api.WorlditorPlayAPI
+    finally:
+        sys.modules.update(saved)
+        for k in list(sys.modules):
+            if k.startswith(fake_root):
+                del sys.modules[k]
+
+
 def test_version_ok_unit():
     """版本比较（spec.version_ok）。"""
     from astrbot_plugin_worlditor.world.play.spec import version_ok

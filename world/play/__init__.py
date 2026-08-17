@@ -70,8 +70,52 @@ class PlayLoader:
 
     # ---------- 加载 ----------
 
+    @staticmethod
+    def _plugin_root_dir() -> Path:
+        """当前插件目录（world/play/__init__.py → 上两级）。"""
+        return Path(__file__).resolve().parents[2]
+
+    def register_plugin_aliases(self) -> None:
+        """把当前插件包注册为顶层名（幂等）。
+
+        玩法包统一按文档路径导入：``from astrbot_plugin_worlditor.api import ...``。
+        AstrBot 真实环境插件以 ``data.plugins.astrbot_plugin_worlditor`` 加载
+        （顶层名不在 sys.modules），此处把当前插件包及其子模块注册顶层别名，
+        保证 demo_play 与社区玩法包在真实环境可导入。
+        """
+        top = self._plugin_root_dir().name  # astrbot_plugin_worlditor
+        if top in sys.modules:
+            return
+        root = self._plugin_root_dir()
+        # 定位当前插件包：包名最后一段 = 插件目录名，且 __path__ 含插件目录
+        # （正规包：__path__[0] = 插件目录；namespace 包：__path__ = 父目录）
+        root_name = None
+        for name, mod in list(sys.modules.items()):
+            paths = getattr(mod, "__path__", None)
+            if not paths:
+                continue
+            if not (name == top or name.endswith("." + top)):
+                continue
+            try:
+                resolved = {Path(str(p)).resolve() for p in paths}
+            except (OSError, TypeError):
+                continue
+            if root in resolved or root.parent in resolved:
+                root_name = name
+                break
+        if root_name is None:
+            logger.warning(
+                "[worlditor] 未定位当前插件包模块，玩法包按顶层包名导入可能失败"
+            )
+            return
+        for name, mod in list(sys.modules.items()):
+            if name == root_name or name.startswith(root_name + "."):
+                sys.modules[top + name[len(root_name) :]] = mod
+        logger.info("[worlditor] 插件包顶层别名注册：%s → %s", root_name, top)
+
     async def load_all(self, context: Any | None = None) -> list[PlayInfo]:
         """加载全部候选玩法包；返回成功加载的列表。"""
+        self.register_plugin_aliases()
         loaded: list[PlayInfo] = []
         for path in self.discover():
             info = await self.load_one(path, context)
