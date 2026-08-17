@@ -1,5 +1,6 @@
-// 世界服务地址（后端独立端口；生产部署改为实际域名）
-export const WORLD_API = (import.meta.env.VITE_WORLD_API || "http://localhost:6288").replace(/\/+$/, "");
+// 世界服务地址。默认空 = 同源相对路径（插件内置托管时页面与 API 同源，
+// 无 CORS 问题）；独立部署时经 VITE_WORLD_API 指向世界服务绝对地址。
+export const WORLD_API = (import.meta.env.VITE_WORLD_API || "").replace(/\/+$/, "");
 
 // ---------- token（localStorage 持久化，独立域与 dashboard 会话隔离） ----------
 

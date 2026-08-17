@@ -1,7 +1,7 @@
 <template>
   <div class="auth-page">
     <div class="auth-card">
-      <h1>🌍 世界底子</h1>
+      <h1>🌍 世界编辑器</h1>
       <p class="auth-sub">进入世界，与 AI 同场。</p>
 
       <div class="seg wide">
