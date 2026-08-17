@@ -7,7 +7,7 @@
 
 ## 0. 一句话定位
 
-**插件 = 世界的"数据 + 编辑 + 身份 + 传输 + 玩法包管理"平台；一切行为、规则、
+**插件 = 世界的"数据 + 编辑 + 身份 + 传输 + 玩法包管理"平台；绝大多数行为、规则、
 工具与界面由玩法包提供。** 插件内置多个领域玩法包（可停用/替换/删除）确保开箱
 可玩，兼作 SDK 模板。
 
@@ -28,8 +28,8 @@
 内核 worlditor（v5）
   ├─ 事实层：地块/连接/模板 + 实体（字段化）+ 物品定义（字段化）
   │          + 玩法数据 KV + 日志（SQLite WAL，全量内存快照；无背包持有表）
-  ├─ 原语（默认实现，全部可被玩法包覆盖/禁用，D11）：
-  │    place_entity / remove_entity / move_entity /
+  ├─ 原语（默认实现；行为原语可被玩法包覆盖/禁用 D11，place/remove
+  │    仅可调用不可覆盖 D14）：place_entity / remove_entity / move_entity /
   │    move（路径移动：读 connections → 抽目标）/
   │    set_data / get_data / interact（handler 命令式调原语，无 effects，D12）
   │    （无背包原语——D8 持有下沉；无 say——D1）
@@ -65,7 +65,7 @@
 | `move` | 路径移动（身份化实体） | 内核：读 connections → 按权重抽目标（死引用剔除） |
 | `move_entity(map,row,col)` | 直接位移（行为驱动，传送语义） | 内核 |
 | `set_data` / `get_data` | 字段读写（合并写 / 全量读） | 内核 |
-| `interact` | 交互通道：handler 命令式调内核原语（无 effects 清单，D12）；结果 = text + ui | 内核 |
+| `interact` | 交互通道：handler 命令式调内核原语（无 effects 清单，D12）；结果 = text + ui | 内核：按 register_interaction 注册表分发（动作校验 → handler → on_interact 事件）；override 则整体替换该通道（校验/事件语义由覆盖者决定，同 §2.4 末句） |
 
 行为原语默认实现由内核提供，**可被玩法包覆盖/禁用**（§2.4，D11）；
 place/remove 可调用但不可覆盖（治理域，D14）。
@@ -81,7 +81,7 @@ place/remove 可调用但不可覆盖（治理域，D14）。
 | MCP 传输层 + 连接认证 + 身份注入 | 通道留内核，工具内容玩法包注册 |
 | 编辑原语正确性（实例锁 / 级联清理 / 身份化实体保护） | 程序安全：世界结构不会因玩法包代码漂移而失控；玩法包可调编辑原语（D14），内容治理与数据备份责任归用户/玩法包 |
 | UI 渲染协议（UiBlock schema） | 协议留内核，视图内容玩法包提供 |
-| 玩法包管理（list/enable/disable/uninstall） | 管理"扩展机制"本身，天然属于内核 admin 域 |
+| 玩法包管理（list/enable/disable/uninstall） | 管理"扩展机制"本身，天然属于内核 admin 域；卸载路径安全（play_id 白名单 + 目录前缀校验，§4.3） |
 
 > **已下沉（不在内核）**：背包持有（D8）、说话与广播（D1）、玩法数据语义
 > （字段由玩法包声明/读写）。
@@ -174,7 +174,8 @@ class ItemDef:
 | `register_interaction` | 交互动作 handler |
 | `register_world_event` | 任意事件名订阅（on_tick 带间隔） |
 | `register_ui_component` / `register_ui_hook` | 自定义界面组件 / 界面注入（before/after/replace） |
-| `register_tool` / `register_view` | MCP 工具 / WebUI 页面 |
+| `register_tool` | MCP 工具；handler 签名 `handler(api, ctx, **args)`——api 注入统一（与 §2.4 一致），ctx = MCP Context（读请求 _meta/进度），身份经 `api.caller()` 读取、内核裁定权限 |
+| `register_view` | WebUI 页面（协议见 §4.4 视图宿主） |
 | `override_primitive` / `disable_primitive` / `call_default_primitive` | 原语覆盖 / 禁用 / 调默认实现（D11，§2.4） |
 
 ### 4.2 运行时（读写 + 身份）
@@ -189,11 +190,29 @@ class ItemDef:
 
 | 能力 | 说明 |
 |---|---|
-| list | 名称/版本/作者/desc/requires/**状态**（loaded/disabled/加载失败+错误详情） |
-| enable / disable | 即时生效：复用 load_one / teardown / clear_play_registrations |
-| uninstall | 删除社区包目录（内置包仅可停用） |
+| list | 名称/版本/作者/desc/requires/**状态**（loaded/disabled/加载失败+错误详情）/**builtin 标志** |
+| enable / disable | 即时生效：复用 load_one / teardown / clear_play_registrations（扩展版）；**disable 仅卸载代码注册，play_data KV 与 data/、web/ 资源保留**，enable 重新加载即恢复 |
+| uninstall | 删除社区包目录（含其数据，不可逆）；内置包仅可停用 |
 | 状态持久化 | enabled 标记落库，重启按标记加载（内置包默认启用，D5） |
 | 整体重载 | 随内核（C2 保持：不做代码热重载） |
+
+**依赖管理（G6）**：
+- 加载顺序：拓扑序（先加载被依赖者）；单包加载失败不阻塞其他包
+- enable：自动先启用其 `requires.plays` 依赖（拓扑）
+- disable：若仍有已加载包依赖它 → **报错拒绝**，提示先停用依赖者
+  （同 D2 风格：显式错误，不做静默级联）
+
+**物理位置（G4）**：
+- 内置包：插件包内 `builtin_plays/`（5 个领域包），随插件版本分发；
+  管理视为只读——可停用、不可 uninstall
+- 社区包：`<数据目录>/plays/`，完整管理能力；PlayLoader 扫描两条路径，
+  加载管线共用
+
+**卸载安全（G7）**：
+- play_id 白名单校验 `^[A-Za-z0-9_-]+$`（非法即拒绝，同 D2 风格）
+- uninstall 仅限数据目录 plays/ 下直接子目录、目录名 == play_id
+  （resolve 后校验前缀，防路径穿越）
+- 内置包目录（builtin_plays/）不在 uninstall 范围——双重保险
 
 入口：admin REST 端点 + WebUI 管理视图（admin 档可见）+ 可选 MCP admin 工具。
 
@@ -203,9 +222,22 @@ class ItemDef:
 |---|---|
 | plays 依赖解析 | `requires.plays` 加载顺序保证（社区包可声明依赖领域包） |
 | MCP 动态工具 | `register_tool`；同名工具冲突**报错拒绝**（D2） |
-| 自定义事件 | `api.emit(event, **data)` + 任意事件名订阅；SSE/world_log 通用化——说话下沉的通道（D1） |
-| 视图宿主 | `register_view(key, {title, icon, provider})`；WebUI 渲染玩法包视图（D7） |
+| 自定义事件 | `api.emit(event, data, log=False)` + 任意事件名订阅；SSE/world_log 通用化——说话下沉的通道（D1）；默认不写 world_log（防高频事件刷爆 5000 上限），说话/广播等需回放的事件显式 `log=True`；SSE 推送与 log 无关 |
+| 视图宿主 | `register_view(key, {title, icon, provider})`（D7）；协议见下 |
 | 数据字段设施 | 三层次字段 + 分类（§3.1） |
+
+**视图协议（G3）**：
+- **provider 形态**：`provider = {type: "component", url: "web/xxx.js"}`——WebUI
+  按需动态加载组件入口（玩法包自有资源 `web/`）；视图生命周期（mount/unmount/
+  params）由内核经 WebUI 路由下发
+- **视图数据**：玩法包自注册 MCP 工具 + 内核 REST 非动作端点（场景/状态/编辑），
+  不新增数据通道（D7）
+- **跳转**：`goto_view(key, params)` 内核导航（注册表 API + WebUI 路由联动）；
+  未注册 key 报错（同 D2 风格）
+- **视图列表**：内核新增 `GET /views`（key/title/icon/包名），管理页展示与
+  前端路由初始化共用
+- **兜底**：无任何视图注册时，WebUI 显示内核"无视图"提示（D7）
+- 不想写组件的玩法包可退化为"数据 + UiBlock 通用渲染"（内核渲染器兜底）
 
 ## 5. 行为归属（谁提供什么）
 
@@ -231,7 +263,7 @@ class ItemDef:
 | `worlditor_play_player` | 玩家 | 玩家实体行为、出生礼包、角色视图 |
 | `worlditor_play_movement` | 移动与视野 | 默认移动 = 内核 move；视野视图（3×3）、world_look/world_move/world_who 工具；可按需 override move |
 | `worlditor_play_interaction` | 交互 | 交互弹窗编排、动作菜单、world_interact 工具；注册种子演示实体的 kind 与交互（merchant/sign/door：talk/trade/read/open） |
-| `worlditor_play_social` | 说话与广播 | cell 说话 / world 广播（喇叭物品自行定义 + 冷却自管）、world_say 工具、日志视图 |
+| `worlditor_play_social` | 说话与广播 | cell 说话 / world 广播（喇叭 = 内核物品定义，本包持有 + 冷却自管，D1）、world_say 工具、日志视图 |
 
 **协作模型：事件驱动，零包间调用**——移动包更新位置 → 内核发 `on_entity_move`
 → 视野/日志包各自订阅刷新。包只依赖内核数据与事件，不依赖其他包存在与否；
@@ -271,7 +303,7 @@ v5 是**开发阶段完全重构**：不兼容旧数据、不迁移、不备份�
 - 无 `schema_version` 检测与迁移逻辑；旧代码仅存在于 git 历史（D4），主线
   不含任何 v4 兼容代码。
 - 新库播种：41 地块 + 3 个种子演示实体（内核，实体 kind 与交互由 interaction
-  包注册）；物品定义全部由玩法包注册（内核仅保留 D1 喇叭定义）。
+  包注册）；物品定义由玩法包注册（苹果归 items 包）；内核仅注册 D1 喇叭定义。
 
 ## 8. 分阶段路线（每阶段可独立发布/验证）
 
@@ -284,7 +316,7 @@ M2 内核瘦身：删除 say / 7 个内置 MCP 工具 / 默认页面内容；Web
    move 保留为可覆盖的默认实现（D11）
 M3 领域包逐个落地：items → player → movement → interaction → social（每包独立可测）
 M4 验证与收尾：一个"替代玩法包"（如同方向延伸视野 / 朝向移动 override move）
-   证明可替换；删除全部内置包的世界仍可编辑/浏览（管理页可见空态）；
+   证明可替换；停用全部内置包后世界仍可编辑/浏览（管理页可见空态）；
    测试迁移完成；docs/PLAY_DEV.md；版本发布 v0.4.0
 ```
 
