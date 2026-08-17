@@ -1,6 +1,6 @@
 # worlditor 重构设计 v5（定稿）——项目重开：内核纯数据，玩法包承载一切
 
-> 状态：**设计定稿**（2026-08，D1–D13 已确认）。基于 v0.3.0 实际运行经验与多轮
+> 状态：**设计定稿**（2026-08，D1–D14 已确认）。基于 v0.3.0 实际运行经验与多轮
 > 讨论重开设计。配套：DESIGN_V4.md（现行架构，v0.3.0 已实现）。v5 为**开发阶段
 > 完全重构**：保留有价值的代码（复制复用），行为层整体以"玩法包"身份重写；
 > 旧数据不保留（D13），零历史债务。本文件是唯一权威设计文档。
@@ -34,7 +34,7 @@
   │    set_data / get_data / interact（handler 命令式调原语，无 effects，D12）
   │    （无背包原语——D8 持有下沉；无 say——D1）
   ├─ 身份：账户 / token 三档 / auth_mode / 邀请码 / 吊销（不可下沉）
-  ├─ 编辑：地块/连接/地图/实体与物品定义编辑（admin 权限，含多地图）
+  ├─ 编辑：地块/连接/地图/实体与物品定义编辑（admin 人类入口 + 玩法包 API 程序入口，D14）
   ├─ 管理：玩法包 list / enable / disable / uninstall + 状态持久化（内置能力）
   ├─ 传输：MCP（streamable HTTP + stdio，连接即身份验证）+
   │        REST 非动作端点 + SSE + 内置 WebUI（玩法包视图宿主）
@@ -61,13 +61,14 @@
 
 | 原语 | 语义 | 默认实现 |
 |---|---|---|
-| `place_entity` / `remove_entity` | 实体存在性（**admin 编辑**，无 spawn/despawn） | 内核 |
+| `place_entity` / `remove_entity` | 实体生命周期（玩法包可 spawn/despawn，D14；身份化实体不可 remove） | 内核 |
 | `move` | 路径移动（身份化实体） | 内核：读 connections → 按权重抽目标（死引用剔除） |
 | `move_entity(map,row,col)` | 直接位移（行为驱动，传送语义） | 内核 |
 | `set_data` / `get_data` | 字段读写（合并写 / 全量读） | 内核 |
 | `interact` | 交互通道：handler 命令式调内核原语（无 effects 清单，D12）；结果 = text + ui | 内核 |
 
-所有原语默认实现由内核提供，但**可被玩法包覆盖/禁用**（§2.4，D11）。
+行为原语默认实现由内核提供，**可被玩法包覆盖/禁用**（§2.4，D11）；
+place/remove 可调用但不可覆盖（治理域，D14）。
 
 ### 2.3 红线（不可下沉）
 
@@ -78,26 +79,32 @@
 | 基础原语（含覆盖/禁用分派） | 行为层地基与能力治理 |
 | 事件总线基础设施（订阅/分发/异常隔离/日志） | 机制留内核，事件语义与自定义事件开放给玩法包 |
 | MCP 传输层 + 连接认证 + 身份注入 | 通道留内核，工具内容玩法包注册 |
-| 地图编辑权限与编辑原语 | 世界内容治理（admin） |
+| 编辑原语正确性（实例锁 / 级联清理 / 身份化实体保护） | 程序安全：世界结构不会因玩法包代码漂移而失控；玩法包可调编辑原语（D14），内容治理与数据备份责任归用户/玩法包 |
 | UI 渲染协议（UiBlock schema） | 协议留内核，视图内容玩法包提供 |
 | 玩法包管理（list/enable/disable/uninstall） | 管理"扩展机制"本身，天然属于内核 admin 域 |
 
 > **已下沉（不在内核）**：背包持有（D8）、说话与广播（D1）、玩法数据语义
 > （字段由玩法包声明/读写）。
-> **内核提供但玩法包可覆盖/禁用**：全部原语（D11）。
+> **内核提供但玩法包可覆盖/禁用**：行为原语 {move, move_entity, set_data,
+> get_data, interact}（D11）；place/remove 可调用但不可覆盖（治理域，D14）。
 
-### 2.4 原语覆盖机制（D11）
+### 2.4 原语覆盖机制（D11 / A3）
 
-| API | 语义 |
-|---|---|
-| `override_primitive(name, handler)` | 替换默认实现（handler 签名与原语一致）；每原语同时至多一个覆盖者，第二个报错（同 D2） |
-| `disable_primitive(name)` | 关闭该能力（调用抛"该能力已被禁用"） |
-
-- 覆盖范围：全部原语（place/remove/move/move_entity/set_data/get_data/interact）
-  ——如"前进/后退"玩法包重写 move（基于实体朝向字段）；身份、管理、编辑权限
-  不可覆盖（红线）。
-- 覆盖/禁用状态**管理页可见**（哪个包覆盖了什么、谁禁用了什么）。
-- 事件/日志照常记录（被覆盖的调用走同一分派入口）。
+- **分派入口**：所有原语调用经内核分派表——无登记 → 内核默认实现；登记
+  override → 锁内回调玩法包 handler；登记 disable → 抛"该能力已被禁用"。
+- **handler 签名**：`handler(api, *args, **kwargs)`——第一参数注入 api（与
+  interaction / event / ui hook handler 统一），其余参数与原语一致。
+- **super 通道**：`api.call_default_primitive(name, *args, **kwargs)` 显式调用
+  内核默认实现（绕过分派表；覆盖者做前置/后置条件时用，如"移动消耗体力"）。
+- **注册约束**：每原语至多一个登记项（override 或 disable 互斥），第二个报错
+  （同 D2）；handler 锁内执行 + 异常隔离（同交互 handler）。
+- **恢复语义**：登记跟随玩法包生命周期——卸载/停用即清除登记、自动恢复默认
+  实现；不设 enable API。
+- **覆盖范围**：`{move, move_entity, set_data, get_data, interact}` 行为原语；
+  place/remove 可**调用**（D14）但不可覆盖/禁用（生命周期与治理域）。
+- 覆盖/禁用状态**管理页可见**（哪个包覆盖了什么、谁禁用了什么）；被覆盖的
+  调用走同一分派入口，事件由实际执行的原语产生（默认实现发对应事件；覆盖
+  行为的事件由玩法包行为决定）。
 
 ## 3. 数据模型
 
@@ -168,12 +175,13 @@ class ItemDef:
 | `register_world_event` | 任意事件名订阅（on_tick 带间隔） |
 | `register_ui_component` / `register_ui_hook` | 自定义界面组件 / 界面注入（before/after/replace） |
 | `register_tool` / `register_view` | MCP 工具 / WebUI 页面 |
-| `override_primitive` / `disable_primitive` | 原语覆盖 / 禁用（D11） |
+| `override_primitive` / `disable_primitive` / `call_default_primitive` | 原语覆盖 / 禁用 / 调默认实现（D11，§2.4） |
 
 ### 4.2 运行时（读写 + 身份）
 
 - 只读：实体/场景/地图/动作列表/背包（玩法包自己的数据）/字段/KV/`list_kinds(category)`
-- 写：`set_data` / `get_data` / `move_entity` / `interact` / `emit`（自定义事件）
+- 写：`set_data` / `get_data` / `move_entity` / `interact` / `emit`（自定义事件）/
+  `place_entity` / `remove_entity` / 地图编辑原语（地块/连接/地图/模板，D14）
 - `caller()`：当前调用者身份（MCP 工具 handler 用，权限内核裁定）
 - 自有资源：`data/`（数据文件）、`web/`（组件入口）、kv namespace（隔离）
 
@@ -213,7 +221,7 @@ class ItemDef:
 | 种子演示实体（商贩/告示牌/木门）的 kind 与交互 | interaction 包（实体本身由内核播种，D13） |
 | 日志视图 | social 包 |
 | 登录/注册/身份 | 内核 |
-| 地图编辑 / 玩法包管理 UI | 内核（admin） |
+| 地图编辑 / 玩法包管理 UI | 内核（admin 人类入口；玩法包经 API 程序化编辑，D14） |
 
 ## 6. 内置领域包（5 个，默认启用，D5）
 
@@ -269,7 +277,8 @@ v5 是**开发阶段完全重构**：不兼容旧数据、不迁移、不备份�
 
 ```
 M1 玩法包基础设施：管理（list/enable/disable/uninstall+持久化）、plays 依赖解析、
-   MCP 动态工具、自定义事件、视图宿主、字段与分类设施、原语分派
+   MCP 动态工具、自定义事件、视图宿主、字段与分类设施、原语分派、
+   玩法包 API 开放编辑原语（spawn/地图编辑，D14）
    —— 内核能力"开放"，默认行为仍在内核（向后兼容）
 M2 内核瘦身：删除 say / 7 个内置 MCP 工具 / 默认页面内容；WebUI 转视图宿主；
    move 保留为可覆盖的默认实现（D11）
@@ -279,7 +288,7 @@ M4 验证与收尾：一个"替代玩法包"（如同方向延伸视野 / 朝向
    测试迁移完成；docs/PLAY_DEV.md；版本发布 v0.4.0
 ```
 
-## 9. 决策记录（D1–D13，已全部确认）
+## 9. 决策记录（D1–D14，已全部确认）
 
 | # | 决策点 | 结论 |
 |---|---|---|
@@ -296,6 +305,7 @@ M4 验证与收尾：一个"替代玩法包"（如同方向延伸视野 / 朝向
 | D11 | 移动与内核能力覆盖 | **移动收束内核**（默认 = 路径移动：读 connections → 抽目标）；**全部原语可被玩法包 override/disable**（每原语至多一个覆盖者，第二个报错；禁用后调用报错）；覆盖状态管理页可见 |
 | D12 | 交互变更表达 | **删除 effects 机制**（取代 V4 A1 双轨）：InteractionResult 仅 text + ui；交互 handler 命令式调用内核原语（set_data / move_entity 等，锁内重入 + 异常隔离，机制已验证）；变更通知由事件总线 + SSE 承担；v5 只有命令式一轨 |
 | D13 | 旧数据与库形态 | **数据不保留**：v5 为开发阶段完全重构，空库重建——启动删旧库（含 -wal/-shm），无迁移、无备份、无检测分支，零历史债务；旧账号/地图/背包/日志全部清除 |
+| D14 | 实体生命周期与地图编辑 | **开放给玩法包**：API 提供 place/remove 与地图编辑原语（地块/连接/地图/模板，取代 v4 B8 的限制部分）；身份化实体（player/agent）不可被 remove（防 token 悬空）、delete_location 保留"身份化实体在场"保护；内核保证锁内执行、级联清理、异常隔离（程序安全）；内容治理与数据备份责任归用户/玩法包 |
 
 ## 10. 与现行版关系
 
