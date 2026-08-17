@@ -211,7 +211,10 @@ async def _scene(request: Request) -> Response:
     ]
     return JSONResponse(
         {
-            "entity": entity.to_dict(),
+            "entity": {
+                **entity.to_dict(),
+                "actions": [a.to_dict() for a in engine.list_actions(entity.id)],
+            },
             "scene": scene.to_dict(),
             "peers": [
                 {

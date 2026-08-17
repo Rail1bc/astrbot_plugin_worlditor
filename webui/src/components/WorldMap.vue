@@ -30,48 +30,41 @@
           </text>
         </template>
 
-        <!-- 实体（名称 + kind 标签，B1） -->
-        <template v-for="e in visibleEntities" :key="e.id">
-          <circle
-            :cx="x(e.col) + CELL / 2"
-            :cy="y(e.row) + CELL - 6"
-            :r="6"
-            class="entity-dot"
-            :class="entityClass(e)"
-            @click.stop="emit('select-entity', e)"
-          />
-          <text
-            :x="x(e.col) + CELL / 2"
-            :y="y(e.row) + CELL + 14"
-            class="entity-name"
-            text-anchor="middle"
-            @click.stop="emit('select-entity', e)"
-          >
-            {{ e.name }}
-          </text>
-        </template>
-
         <!-- 我的位置 -->
         <circle
           v-if="playerPos"
           :cx="x(playerPos.col) + CELL / 2"
           :cy="y(playerPos.row) + CELL / 2"
-          :r="16"
+          :r="17"
           class="player-ring"
         />
+
+        <!-- 实体：仅小圆点标记（不直接绘制在地块上，B1 实体列表保持简单；
+             名称与 kind 标签在同地块角色条展示），点击打开交互弹窗 -->
+        <template v-for="e in visibleEntities" :key="e.id">
+          <circle
+            :cx="x(e.col) + CELL / 2"
+            :cy="y(e.row) + CELL - 8"
+            :r="8"
+            class="entity-dot"
+            :class="entityClass(e)"
+            @click.stop="emit('select-entity', e)"
+          />
+        </template>
       </g>
     </svg>
 
     <div class="map-controls">
       <button class="btn-icon" @click="zoomBy(1.3)">＋</button>
       <button class="btn-icon" @click="zoomBy(1 / 1.3)">－</button>
-      <button class="btn-icon" @click="fit">⛶</button>
+      <button class="btn-icon" @click="fitAll">⛶</button>
+      <button v-if="playerPos" class="btn-icon" @click="focusPlayer">◎</button>
     </div>
   </div>
 </template>
 
 <script setup>
-import { computed, ref } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 
 const props = defineProps({
   locations: { type: Array, default: () => [] },
@@ -86,7 +79,7 @@ const PAD = 30;
 
 const root = ref(null);
 const pan = ref({ x: 0, y: 0 });
-const scale = ref(1);
+const scale = ref(2);
 
 const bounds = computed(() => {
   let minR = 0, maxR = 0, minC = 0, maxC = 0;
@@ -132,6 +125,30 @@ function entityClass(e) {
   return "kind-npc";
 }
 
+// 默认聚焦玩家位置（局部视野，而非全图平铺）
+function focusPlayer() {
+  if (!props.playerPos) return;
+  const w = (bounds.value.maxC - bounds.value.minC + 1) * CELL + PAD * 2;
+  const h = (bounds.value.maxR - bounds.value.minR + 1) * CELL + PAD * 2;
+  scale.value = 2;
+  const px = x(props.playerPos.col) + CELL / 2;
+  const py = y(props.playerPos.row) + CELL / 2;
+  pan.value = { x: px - w / (2 * scale.value), y: py - h / (2 * scale.value) };
+}
+
+function fitAll() {
+  scale.value = 1;
+  pan.value = { x: 0, y: 0 };
+}
+
+watch(
+  () => props.playerPos,
+  () => {
+    nextTick(focusPlayer);
+  },
+  { immediate: true },
+);
+
 // 平移 / 缩放
 let dragging = false;
 let last = { x: 0, y: 0 };
@@ -155,11 +172,6 @@ function onPointerUp() {
 }
 
 function zoomBy(factor) {
-  scale.value = Math.min(4, Math.max(0.2, scale.value * factor));
-}
-
-function fit() {
-  scale.value = 1;
-  pan.value = { x: 0, y: 0 };
+  scale.value = Math.min(6, Math.max(0.2, scale.value * factor));
 }
 </script>

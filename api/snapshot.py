@@ -67,7 +67,12 @@ class V4SnapshotAPI:
             return error_response(e)
         return json_response(
             {
-                "entity": _entity_brief(entity),
+                "entity": {
+                    **_entity_brief(entity),
+                    "actions": [
+                        a.to_dict() for a in self.v4_engine.list_actions(entity.id)
+                    ],
+                },
                 "scene": scene.to_dict(),
                 "peers": peers,
             }

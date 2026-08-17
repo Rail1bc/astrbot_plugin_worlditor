@@ -2,8 +2,16 @@
   <div class="page world-page">
     <!-- 顶栏：当前地块 -->
     <header class="loc-header">
-      <h1>{{ scene ? scene.location.name : "世界" }}</h1>
-      <p>{{ scene ? scene.description : "加载中……" }}</p>
+      <h1>{{ scene ? scene.location.name : watching ? "围观模式" : "世界" }}</h1>
+      <p>
+        {{
+          scene
+            ? scene.description
+            : watching
+              ? "只读围观：点击地图上的实体可查看"
+              : "加载中……"
+        }}
+      </p>
       <span v-if="store.connected" class="live-dot" title="实时连接"></span>
     </header>
 
@@ -31,8 +39,8 @@
       </div>
     </div>
 
-    <!-- 底部动作区 -->
-    <div class="action-dock">
+    <!-- 底部动作区（围观模式只读，隐藏） -->
+    <div v-if="!watching" class="action-dock">
       <div class="dir-pad">
         <button
           v-for="(path, i) in scene?.paths || []"
@@ -73,6 +81,7 @@ const mcp = new McpClient();
 const sayText = ref("");
 const busy = ref(false);
 const modalEntity = ref(null);
+const watching = ref(false); // 围观模式（read 档无实体）
 let es = null;
 
 const myPos = computed(() =>
@@ -92,11 +101,20 @@ async function ensureMcp() {
 async function refreshScene() {
   try {
     const data = await getScene();
+    watching.value = false;
     store.entity = data.entity;
     store.scene = data.scene;
     store.peers = data.peers;
   } catch (e) {
-    notifyError(e.message);
+    if (e.status === 400 && String(e.message).includes("entity_id")) {
+      // read 档围观：无自己的实体
+      watching.value = true;
+      store.entity = null;
+      store.scene = null;
+      store.peers = [];
+    } else {
+      notifyError(e.message);
+    }
   }
 }
 
@@ -113,7 +131,7 @@ async function refreshAll() {
 }
 
 async function move(direction, pathIndex) {
-  if (busy.value) return;
+  if (busy.value || watching.value) return;
   busy.value = true;
   try {
     await ensureMcp();
@@ -137,7 +155,7 @@ async function move(direction, pathIndex) {
 
 async function say() {
   const text = sayText.value.trim();
-  if (!text || busy.value) return;
+  if (!text || busy.value || watching.value) return;
   sayText.value = "";
   try {
     await ensureMcp();
@@ -148,8 +166,20 @@ async function say() {
   }
 }
 
-function openEntity(entity) {
-  modalEntity.value = entity;
+async function openEntity(entity) {
+  // 优先用同地块角色条里的实体（含 actions）
+  const local = store.peers.find((p) => p.entity.id === entity.id);
+  if (local) {
+    modalEntity.value = { ...local.entity, actions: local.actions || [] };
+    return;
+  }
+  // 围观者/远处实体：拉取该实体场景（后端返回实体自身 actions）
+  try {
+    const data = await getScene(entity.id);
+    modalEntity.value = data.entity;
+  } catch (e) {
+    modalEntity.value = { ...entity, actions: [] };
+  }
 }
 
 function handleSseEvent(payload) {
@@ -190,7 +220,9 @@ function connectEvents() {
 
 onMounted(async () => {
   await refreshAll();
-  connectEvents();
+  if (!watching.value) {
+    connectEvents(); // 围观者无 play 档凭据，不连 SSE
+  }
 });
 
 onUnmounted(() => {

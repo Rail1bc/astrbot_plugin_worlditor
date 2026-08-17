@@ -38,7 +38,9 @@ async function http(path, opts = {}) {
     } catch {
       /* ignore */
     }
-    throw new Error(message);
+    const err = new Error(message);
+    err.status = resp.status; // 供调用方区分 400（围观者无实体）等场景
+    throw err;
   }
   return resp;
 }
