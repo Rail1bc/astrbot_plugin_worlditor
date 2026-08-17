@@ -4,7 +4,7 @@
 
 <p><strong>简体中文</strong></p>
 
-<h1>世界底子（worlditor）</h1>
+<h1>世界编辑器（worlditor）</h1>
 
 <p><strong>为 AstrBot 构建的世界平台内核：一个可以无限生长的世界，AI 与人都能进入。</strong></p>
 
@@ -20,7 +20,7 @@
 </div>
 
 > [!NOTE]
-> **当前版本状态**：v0.3.0（0.x 预发布，正式上线前保持 0 开头）是**世界底子 + 唯一动作通道**——内核（worlditor）只提供世界的事实模型、动作原语、交互协议与玩法包注册表，**明确不做任何具体玩法**；玩法（角色养成、物品合成、交易市场、战斗……）由玩法包（`worlditor_play_*`）从开源社区生长。已落地：**MCP 唯一动作通道**（streamable HTTP + stdio，连接身份验证）、**身份自助注册**（open/invite/closed + token 三档）与**独立 WebUI**（移动端优先，WebUI 本身是 MCP 客户端，构建产物插件内置托管）。v3 的 agent 工具与调试页保留过渡。完整设计见 [DESIGN_V4.md](DESIGN_V4.md)。
+> **当前版本状态**：v0.3.0（0.x 预发布，正式上线前保持 0 开头）——内核（worlditor）只提供世界的事实模型、动作原语、交互协议与玩法包注册表，**明确不做任何具体玩法**；玩法（角色养成、物品合成、交易市场、战斗……）由玩法包（`worlditor_play_*`）从开源社区生长。已落地：**MCP 唯一动作通道**（streamable HTTP + stdio，连接身份验证）、**身份自助注册**（open/invite/closed + token 三档）与**独立 WebUI**（移动端优先，WebUI 本身是 MCP 客户端，构建产物插件内置托管）。v3 的 agent 工具与调试页保留过渡。完整设计见 [DESIGN_V4.md](DESIGN_V4.md)。
 
 ## 这是什么
 
@@ -123,4 +123,4 @@ python -m ruff format --check .     # 格式检查
 
 [更新记录](CHANGELOG.md) · [设计文档](DESIGN_V4.md) · [贡献指南](CONTRIBUTING.md) · [版本发布](https://github.com/Rail1bc/astrbot_plugin_worlditor/releases) · [问题反馈](https://github.com/Rail1bc/astrbot_plugin_worlditor/issues)
 
-世界底子使用 [AGPL-3.0 许可证](LICENSE) 发布。
+世界编辑器使用 [AGPL-3.0 许可证](LICENSE) 发布。

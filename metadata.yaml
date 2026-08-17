@@ -1,5 +1,5 @@
 name: astrbot_plugin_worlditor # 插件唯一识别名，以 astrbot_plugin_ 前缀开头
-display_name: 世界底子 # 用于展示的名字
+display_name: 世界编辑器 # 用于展示的名字（保持原名，勿改）
 desc: 世界平台内核：地块 + 实体（玩家/agent/玩法包扩展）的事实模型、动作原语、交互协议（声明式 effects 内核结算）、单一事件总线与玩法包注册表；MCP 唯一动作通道（streamable HTTP + stdio，连接身份验证）与独立 WebUI（移动端优先，WebUI 本身是 MCP 客户端）；身份自助注册（open/invite/closed + token 三档）；内置 demo 玩法包演示完整链路，社区玩法包（worlditor_play_*）从数据目录 plays/ 自动发现加载。 # 插件简短描述
 version: v0.3.0 # 插件版本号（0.x 预发布，正式上线前保持 0 开头）
 author: Rail1bc # 作者
