@@ -31,15 +31,15 @@
   ├─ 原语（默认实现，全部可被玩法包覆盖/禁用，D11）：
   │    place_entity / remove_entity / move_entity /
   │    move（路径移动：读 connections → 抽目标）/
-  │    set_data / get_data / interact（effects 内核结算，op 白名单见 D12）
+  │    set_data / get_data / interact（handler 命令式调原语，无 effects，D12）
   │    （无背包原语——D8 持有下沉；无 say——D1）
   ├─ 身份：账户 / token 三档 / auth_mode / 邀请码 / 吊销（不可下沉）
   ├─ 编辑：地块/连接/地图/实体与物品定义编辑（admin 权限，含多地图）
   ├─ 管理：玩法包 list / enable / disable / uninstall + 状态持久化（内置能力）
   ├─ 传输：MCP（streamable HTTP + stdio，连接即身份验证）+
   │        REST 非动作端点 + SSE + 内置 WebUI（玩法包视图宿主）
-  └─ 协议：UiBlock / InteractionResult / 事件总线（基础设施：订阅/分发/日志/
-            SSE 序列化支持任意事件名；事件语义由玩法包定义）
+  └─ 协议：UiBlock / InteractionResult（text + ui，无 effects，D12）/ 事件总线
+            （基础设施：订阅/分发/日志/SSE 序列化支持任意事件名；事件语义由玩法包定义）
 ```
 
 ## 2. 内核：能力与红线
@@ -65,7 +65,7 @@
 | `move` | 路径移动（身份化实体） | 内核：读 connections → 按权重抽目标（死引用剔除） |
 | `move_entity(map,row,col)` | 直接位移（行为驱动，传送语义） | 内核 |
 | `set_data` / `get_data` | 字段读写（合并写 / 全量读） | 内核 |
-| `interact` | 交互通道：handler + effects 内核结算（op 白名单 {move, move_entity, set_data}，D12） | 内核 |
+| `interact` | 交互通道：handler 命令式调内核原语（无 effects 清单，D12）；结果 = text + ui | 内核 |
 
 所有原语默认实现由内核提供，但**可被玩法包覆盖/禁用**（§2.4，D11）。
 
@@ -243,7 +243,7 @@ class ItemDef:
 |---|---|---|
 | `world/v3model.py` | 原样 | 地块/连接/TextSchedule/模板——数据模型稳定 |
 | `world/store.py` + `world/v4store.py` | 复制删减 | maps/locations/templates/world_meta + play_data/world_log + accounts/tokens/invite_codes 原样；entities 表字段化（data_json，删 attrs/state）；items 表仅定义（字段化，stackable/use_action 等玩法字段入 data）；**删除 inventories 表**（D8）；旧库数据不保留（D13） |
-| `world/v4engine.py` 机制部分 | 复制删减 | move（保留为默认实现，走原语分派）/ move_entity / interact+effects / 事件总线（开放任意事件名 + emit）/ 地图编辑原语 / 订阅；删除 say（D1）、give/take/count 与持有（D8）、7 工具注册；attrs/state → set_data/get_data 字段体系（D9）；新增原语分派（override/disable）与字段/分类注册表 |
+| `world/v4engine.py` 机制部分 | 复制删减 | move（保留为默认实现，走原语分派）/ move_entity / interact（handler 命令式，删除 effects 结算）/ 事件总线（开放任意事件名 + emit）/ 地图编辑原语 / 订阅；删除 say（D1）、give/take/count 与持有（D8）、7 工具注册；attrs/state → set_data/get_data 字段体系（D9）；新增原语分派（override/disable）与字段/分类注册表 |
 | `world/identity.py` | 原样 | 身份红线 |
 | `world/mcp/http.py` + `stdio.py` | 原样删减 | 传输/认证/世界服务端点（/auth /state /scene /events /admin）；删除内置 7 工具注册（改动态）、/bag（背包下沉）；/events 出口支持玩法包自定义事件通用 payload |
 | `api/` | 复制 | admin 端点（地图编辑含实体放置）等非动作端点 |
@@ -294,7 +294,7 @@ M4 验证与收尾：一个"替代玩法包"（如同方向延伸视野 / 朝向
 | D9 | 实体数据形态 | **字段化**：实体 = id/kind/位置/name/desc + data 字段（内核不解释）；kind 注册可声明字段 schema（UI 通用渲染）；可向已有 kind 追加字段；实例可写任意未声明字段（buff 等临时效果） |
 | D10 | 实体分类标签 | kind 可挂 categories 标签；分类字段（add_category_fields）使该分类全部 kind 获得字段；list_kinds(category) 精准选取（如"给所有生物加血量"） |
 | D11 | 移动与内核能力覆盖 | **移动收束内核**（默认 = 路径移动：读 connections → 抽目标）；**全部原语可被玩法包 override/disable**（每原语至多一个覆盖者，第二个报错；禁用后调用报错）；覆盖状态管理页可见 |
-| D12 | effects 结算 op 集 | **收窄为内核原语白名单 {move, move_entity, set_data}**（结算走原语分派，D11 一致）；物品/说话类副作用由玩法包命令式自理（与 D1/D8 一致）；interact/emit 不入 effects（防连锁环；事件是副作用不是变更） |
+| D12 | 交互变更表达 | **删除 effects 机制**（取代 V4 A1 双轨）：InteractionResult 仅 text + ui；交互 handler 命令式调用内核原语（set_data / move_entity 等，锁内重入 + 异常隔离，机制已验证）；变更通知由事件总线 + SSE 承担；v5 只有命令式一轨 |
 | D13 | 旧数据与库形态 | **数据不保留**：v5 为开发阶段完全重构，空库重建——启动删旧库（含 -wal/-shm），无迁移、无备份、无检测分支，零历史债务；旧账号/地图/背包/日志全部清除 |
 
 ## 10. 与现行版关系
